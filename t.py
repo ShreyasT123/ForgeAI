@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from langchain.agents import create_agent
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.tools import tool
-
+from langchain_mistralai import ChatMistralAI
 load_dotenv()
 
 REPO_PATH = Path(os.environ.get("REPO_PATH", ".")).resolve()
@@ -182,7 +182,7 @@ def create_pull_request(title: str, body: str, head_branch: str, base_branch: st
 
 # ---------------- Initialize Gemini ----------------
 
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
+llm = ChatMistralAI(model="mistral-large-latest")
 
 agent = create_agent(
     model=llm,
@@ -209,7 +209,7 @@ agent = create_agent(
 if __name__ == "__main__":
     task = """
     Add or update a file 'hello.txt' in the ForgeAI repo with the content:
-    'Hello from AI agent v2'. Then commit, push to a branch called 'ai/hellow-update',
+    'Hello from AI agent v3'. Then commit, push to a branch called 'newupdate',
     and create a pull request to the main branch.
     """
     result = agent.invoke({"messages": [{"role": "user", "content": task}]})
