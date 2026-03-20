@@ -208,8 +208,8 @@ agent = create_agent(
 
 if __name__ == "__main__":
     task = """
-    Add or update a file 'hellow.txt' in the ForgeAI repo with the content:
-    'Hello from AI agent'. Then commit, push to a branch called 'ai/hellow-update',
+    Add or update a file 'hello.txt' in the ForgeAI repo with the content:
+    'Hello from AI agent v2'. Then commit, push to a branch called 'ai/hellow-update',
     and create a pull request to the main branch.
     """
     result = agent.invoke({"messages": [{"role": "user", "content": task}]})
