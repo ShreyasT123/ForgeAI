@@ -1,0 +1,27 @@
+Metadata-Version: 2.4
+Name: helius-agent
+Version: 0.1.0
+Summary: A safe and observable agentic coding system
+Author: Helius Team
+Requires-Python: >=3.11
+Requires-Dist: langchain
+Requires-Dist: langchain-mistralai
+Requires-Dist: langchain-openai
+Requires-Dist: langchain-google-genai
+Requires-Dist: langgraph
+Requires-Dist: python-dotenv
+Requires-Dist: opentelemetry-api
+Requires-Dist: opentelemetry-sdk
+Requires-Dist: opentelemetry-exporter-otlp
+Requires-Dist: psutil
+Requires-Dist: pytest>=8.4.2
+Requires-Dist: deepagents>=0.4.11
+Requires-Dist: tavily-python>=0.7.23
+Requires-Dist: requests>=2.32.5
+Provides-Extra: test
+Requires-Dist: pytest; extra == "test"
+Requires-Dist: pytest-mock; extra == "test"
+Provides-Extra: dev
+Requires-Dist: black; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
+Requires-Dist: mypy; extra == "dev"
