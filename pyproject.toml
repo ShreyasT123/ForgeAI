@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "helius-agent"
+version = "0.1.0"
+description = "A safe and observable agentic coding system"
+authors = [
+    { name = "Helius Team" }
+]
+dependencies = [
+    "langchain",
+    "langchain-mistralai",
+    "langchain-openai",
+    "langchain-google-genai",
+    "langgraph",
+    "python-dotenv",
+    "opentelemetry-api",
+    "opentelemetry-sdk",
+    "opentelemetry-exporter-otlp",
+    "psutil",
+    "pytest>=8.4.2",
+    "deepagents>=0.4.11",
+    "tavily-python>=0.7.23",
+    "requests>=2.32.5",
+]
+requires-python = ">=3.11"
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "pytest-mock",
+]
+dev = [
+    "black",
+    "ruff",
+    "mypy",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py39"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
