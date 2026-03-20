@@ -226,12 +226,12 @@ if __name__ == "__main__":
    - If it exists, read its content using `read_file`.
    - Append the new message on a new line if the exact message is not already present.
    - If it does not exist, create it safely using `write_file`.
-4. Create a **single feature branch** for this task named: `feature/hello-mist-update`.
+4. Create a **single feature branch** for this task named: `feature/hello-mist-update-v2`.
 5. Stage all changes and commit them with the message: `"Add hello.mist.txt with AI message"`.
 6. Push the branch to the remote repository via SSH using `git_push`.
-7. Create a **pull request** from `feature/hello-mist-update` to the `main` branch using `create_pull_request`.
-   - PR title: `"Add hello.mist.txt via AI agent"`
-   - PR body: `"This PR adds or updates hello.mist.txt with a greeting from the AI agent."`
+7. Create a **pull request** from `feature/hello-mist-update-v2` to the `main` branch using `create_pull_request`.
+   - PR title: `"Add hello.mist.v2.txt via AI agent"`
+   - PR body: `"This PR adds or updates hello.mist.v2.txt with a greeting from the AI agent."`
 8. Confirm each step after completion before moving to the next step.
 9. **Do not** modify any files outside the repository or create extra branches.
 10. After PR creation, return a JSON summary including:
