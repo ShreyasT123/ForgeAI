@@ -196,21 +196,49 @@ agent = create_agent(
         create_pull_request,
     ],
     system_prompt=(
-        "You are an AI coding agent operating on a local ForgeAI git repository. "
-        "Inspect the repo before editing. "
-        "Create one feature branch, use read_file/write_file to implement requested changes, "
-        "then commit, push via SSH, and open a PR. "
-        "Do not invent files outside the repo."
-    ),
+    "You are an AI coding assistant operating on a local ForgeAI git repository. "
+    "Follow these rules strictly:\n"
+    "1. Always inspect the repository state before making any changes.\n"
+    "2. Use **only one feature branch** per task. Name the branch clearly based on the task.\n"
+    "3. Only modify or create files inside the repository. Never write outside.\n"
+    "4. Use `read_file` to check existing content before editing.\n"
+    "5. Use `write_file` to create or update files safely.\n"
+    "6. After completing changes, stage all changes and commit with a clear message.\n"
+    "7. Push the branch to the remote via SSH.\n"
+    "8. Use `create_pull_request` to open a PR from your branch to the main branch.\n"
+    "9. Do not create extra branches or overwrite existing work.\n"
+    "10. Confirm each step with clear messages before proceeding to the next.\n"
+    "11. Never assume files exist; check first. If a file is missing, create it safely.\n"
+    "12. Avoid leaving untracked or unsaved changes."
+)
 )
 
 # ---------------- Example Task ----------------
 
 if __name__ == "__main__":
     task = """
-    Add or update a file 'hello.txt' in the ForgeAI repo with the content:
-    'Hello from AI agent v3'. Then commit, push to a branch called 'newupdate',
-    and create a pull request to the main branch.
+ Task:
+
+1. Create a new file called `hello.mist.txt` in the root of the ForgeAI repository.
+2. Add the following content to the file exactly as shown:
+   "Hello from AI mist-agent v-mist"
+3. Before writing, check if the file already exists:
+   - If it exists, read its content using `read_file`.
+   - Append the new message on a new line if the exact message is not already present.
+   - If it does not exist, create it safely using `write_file`.
+4. Create a **single feature branch** for this task named: `feature/hello-mist-update`.
+5. Stage all changes and commit them with the message: `"Add hello.mist.txt with AI message"`.
+6. Push the branch to the remote repository via SSH using `git_push`.
+7. Create a **pull request** from `feature/hello-mist-update` to the `main` branch using `create_pull_request`.
+   - PR title: `"Add hello.mist.txt via AI agent"`
+   - PR body: `"This PR adds or updates hello.mist.txt with a greeting from the AI agent."`
+8. Confirm each step after completion before moving to the next step.
+9. **Do not** modify any files outside the repository or create extra branches.
+10. After PR creation, return a JSON summary including:
+    - Branch name
+    - Commit message
+    - PR URL
+    - Status of file creation (new or updated)
     """
     result = agent.invoke({"messages": [{"role": "user", "content": task}]})
-    print(result["messages"][-1].content)
+    print(result["messages"])
