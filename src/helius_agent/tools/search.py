@@ -14,8 +14,51 @@ Features:
 
 import os
 import requests
-from typing import Optional, Dict, Any, List
-from langchain.tools import tool
+from typing import Dict, Any, List
+
+def _get_tool():
+    try:
+        from langchain_core.tools import tool as lc_tool
+        return lc_tool
+    except Exception:
+        try:
+            from langchain.tools import tool as lc_tool  # type: ignore
+            return lc_tool
+        except Exception:
+            def _noop_tool(*_args, **_kwargs):
+                def decorator(func):
+                    return func
+                return decorator
+            return _noop_tool
+
+tool = _get_tool()
+
+def _toolify(func, args_schema=None, name: str | None = None):
+    try:
+        t = tool(name=name, args_schema=args_schema)(func)
+        if not hasattr(t, "invoke"):
+            raise AttributeError("tool has no invoke")
+        func.invoke = t.invoke  # type: ignore[attr-defined]
+        func.name = getattr(t, "name", func.__name__)  # type: ignore[attr-defined]
+        func.description = getattr(t, "description", "")  # type: ignore[attr-defined]
+        return t
+    except Exception:
+        class _SimpleTool:
+            def __init__(self, f, tool_name: str):
+                self._f = f
+                self.name = tool_name
+                self.description = f.__doc__ or ""
+            def invoke(self, inputs):
+                if isinstance(inputs, dict):
+                    return self._f(**inputs)
+                return self._f(inputs)
+            def __call__(self, *args, **kwargs):
+                return self._f(*args, **kwargs)
+        t = _SimpleTool(func, name or func.__name__)
+        func.invoke = t.invoke  # type: ignore[attr-defined]
+        func.name = t.name  # type: ignore[attr-defined]
+        func.description = t.description  # type: ignore[attr-defined]
+        return t
 
 
 # ==================== Helper functions ====================
@@ -73,7 +116,6 @@ def _serpapi_search(query: str, limit: int = 3) -> List[Dict[str, Any]]:
 # ==================== Agent-invokable tool ====================
 
 
-@tool
 def search(query: str, engine: str = "all", limit: int = 3) -> str:
     """Search the web using Tavily, SerpAPI, or both.
 
@@ -110,6 +152,9 @@ def search(query: str, engine: str = "all", limit: int = 3) -> str:
     import json
 
     return json.dumps(combined_results, indent=2)
+
+
+search_tool = _toolify(search, name="search")
 
 
 # ==================== Example usage ====================

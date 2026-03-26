@@ -1,176 +1,218 @@
-
-import logging
+import os
+import re
+from pathlib import Path
 from typing import Optional
 
-from langchain.tools import tool
-from helius_agent.tools.vfs import BackendProtocol, LocalDiskBackend
+from pydantic import BaseModel, Field
+from langchain_core.tools import tool
 
-logger = logging.getLogger(__name__)
+# --- Security and Configuration ---
+WORKSPACE_ROOT = Path.cwd().resolve()
+MAX_OUTPUT_LENGTH = 50_000
+IGNORE_DIRS = {".git", ".venv", "node_modules", "__pycache__", "dist", "build"}
 
-# Global backend reference for the prototype
-# In a full implementation, this would be part of the Agent's runtime/context
-_CURRENT_BACKEND: BackendProtocol = LocalDiskBackend(root_dir=".", virtual_mode=True)
+def _resolve_path(filepath: str) -> Path:
+    """Secure path resolution to prevent directory traversal attacks."""
+    target = (WORKSPACE_ROOT / filepath).resolve()
+    if not target.is_relative_to(WORKSPACE_ROOT):
+        raise ValueError(f"Security Error: Path '{filepath}' is outside the workspace.")
+    return target
 
 
-def set_backend(backend: BackendProtocol):
-    global _CURRENT_BACKEND
-    _CURRENT_BACKEND = backend
+# --- 1. LS TOOL ---
+class LsArgs(BaseModel):
+    path: str = Field(default=".", description="Directory path to list.")
 
-
-@tool
+@tool(args_schema=LsArgs)
 def ls(path: str = ".") -> str:
     """List files and directories in the given path."""
     try:
-        infos = _CURRENT_BACKEND.ls_info(path)
-        if not infos:
-            return "No files found."
-        
-        lines = []
-        for info in infos:
-            prefix = "[DIR] " if info.is_dir else "      "
-            size_str = f" ({info.size} bytes)" if info.size is not None else ""
-            lines.append(f"{prefix}{info.path}{size_str}")
-        return "\n".join(lines)
+        target = _resolve_path(path)
+        if not target.exists():
+            return f"Error: Path '{path}' does not exist."
+        if not target.is_dir():
+            return f"Error: '{path}' is not a directory."
+
+        lines =[]
+        for item in sorted(target.iterdir(), key=lambda x: (x.is_file(), x.name)):
+            if item.name in IGNORE_DIRS:
+                continue
+            
+            prefix = "      " if item.is_file() else "[DIR] "
+            size_str = f" ({item.stat().st_size} bytes)" if item.is_file() else ""
+            lines.append(f"{prefix}{item.name}{size_str}")
+
+        output = "\n".join(lines) or "Directory is empty."
+        return output[:MAX_OUTPUT_LENGTH] + ("\n...[TRUNCATED]" if len(output) > MAX_OUTPUT_LENGTH else "")
     except Exception as e:
         return f"Error listing directory: {e}"
 
 
-@tool
-def read_file(path: str, start_line: int = 1, end_line: Optional[int] = None) -> str:
-    """Read content of a file, optionally within a line range (1-indexed)."""
+# --- 2. READ FILE TOOL ---
+class ReadFileArgs(BaseModel):
+    path: str = Field(..., description="Path to the file to read.")
+    start_line: Optional[int] = Field(default=None, description="Starting line number (1-indexed).")
+    end_line: Optional[int] = Field(default=None, description="Ending line number (1-indexed).")
+
+@tool(args_schema=ReadFileArgs)
+def read_file(path: str, start_line: Optional[int] = None, end_line: Optional[int] = None) -> str:
+    """Read content of a file, optionally within a line range. Outputs with line numbers."""
     try:
-        limit = (end_line - start_line + 1) if end_line else 2000
-        return _CURRENT_BACKEND.read(path, offset=start_line - 1, limit=limit)
+        target = _resolve_path(path)
+        if not target.is_file():
+            return f"Error: File '{path}' does not exist."
+        if target.stat().st_size > 5 * 1024 * 1024:
+            return "Error: File is too large (> 5MB)."
+
+        with open(target, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        s_idx = max(0, start_line - 1) if start_line else 0
+        e_idx = min(len(lines), end_line) if end_line else len(lines)
+        
+        # Add line numbers to help the agent with context
+        numbered_lines =[f"{i + s_idx + 1:4d} | {line}" for i, line in enumerate(lines[s_idx:e_idx])]
+        output = "".join(numbered_lines)
+        
+        return output[:MAX_OUTPUT_LENGTH] + ("\n...[TRUNCATED]" if len(output) > MAX_OUTPUT_LENGTH else "")
+    except UnicodeDecodeError:
+        return f"Error: '{path}' appears to be a binary file."
     except Exception as e:
         return f"Error reading file: {e}"
 
 
-@tool
+# --- 3. WRITE FILE TOOL ---
+class WriteFileArgs(BaseModel):
+    path: str = Field(..., description="Path to the new file.")
+    content: str = Field(..., description="Complete content to write to the file.")
+
+@tool(args_schema=WriteFileArgs)
 def write_file(path: str, content: str) -> str:
     """Write content to a new file. Fails if the file already exists."""
     try:
-        result = _CURRENT_BACKEND.write(path, content)
-        if result.error:
-            return f"Error: {result.error}"
-        return f"Successfully wrote to {result.path}"
+        target = _resolve_path(path)
+        if target.exists():
+            return f"Error: File '{path}' already exists. Use edit_file to modify it."
+
+        # Automatically create missing parent directories
+        target.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(target, 'w', encoding='utf-8') as f:
+            f.write(content)
+            
+        return f"Successfully wrote new file to '{path}'."
     except Exception as e:
         return f"Error writing file: {e}"
 
 
-@tool
-def edit_file(
-    path: str, old_string: str, new_string: str, replace_all: bool = False
-) -> str:
-    """
-    Replace text in a file. 
-    By default, fails if 'old_string' is not unique in the file.
-    """
+# --- 4. EDIT FILE TOOL (Surgical Diff) ---
+class EditFileArgs(BaseModel):
+    path: str = Field(..., description="Path of the file to edit.")
+    old_string: str = Field(..., description="Exact string to find and replace. Must match perfectly.")
+    new_string: str = Field(..., description="The new string to insert.")
+    replace_all: bool = Field(default=False, description="If True, replaces all occurrences. If False, fails if not unique.")
+
+@tool(args_schema=EditFileArgs)
+def edit_file(path: str, old_string: str, new_string: str, replace_all: bool = False) -> str:
+    """Replace a specific block of text in a file. Requires an exact match of the old_string."""
     try:
-        result = _CURRENT_BACKEND.edit(path, old_string, new_string, replace_all)
-        if result.error:
-            return f"Error: {result.error}"
-        return f"Successfully updated {result.path} ({result.occurrences} occurrences replaced)."
+        target = _resolve_path(path)
+        if not target.is_file():
+            return f"Error: File '{path}' does not exist."
+
+        with open(target, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # Normalize line endings to avoid OS-level mismatches (CRLF vs LF)
+        content_norm = content.replace('\r\n', '\n')
+        old_norm = old_string.replace('\r\n', '\n')
+        new_norm = new_string.replace('\r\n', '\n')
+
+        occurrences = content_norm.count(old_norm)
+        
+        if occurrences == 0:
+            return "Error: `old_string` not found in the file. Make sure you included exact whitespace and indentation."
+        if occurrences > 1 and not replace_all:
+            return f"Error: Found {occurrences} occurrences of `old_string`. It must be unique, or set replace_all=True."
+
+        new_content = content_norm.replace(old_norm, new_norm)
+        
+        with open(target, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(new_content)
+            
+        return f"Successfully updated '{path}' ({occurrences} occurrences replaced)."
     except Exception as e:
         return f"Error editing file: {e}"
 
 
-@tool
+# --- 5. DELETE FILE TOOL ---
+class DeleteFileArgs(BaseModel):
+    path: str = Field(..., description="Path to the file or directory to delete.")
+
+@tool(args_schema=DeleteFileArgs)
 def delete_file(path: str) -> str:
-    """Delete a file or directory from the filesystem."""
+    """Delete a file or an empty directory."""
     try:
-        return _CURRENT_BACKEND.delete(path)
+        target = _resolve_path(path)
+        if not target.exists():
+            return f"Error: Path '{path}' does not exist."
+            
+        if target.is_dir():
+            try:
+                target.rmdir()
+                return f"Successfully deleted empty directory '{path}'."
+            except OSError:
+                return f"Error: Directory '{path}' is not empty. Manual deletion required."
+        else:
+            target.unlink()
+            return f"Successfully deleted file '{path}'."
     except Exception as e:
         return f"Error deleting: {e}"
 
 
-@tool
-def insert_at_line(path: str, line_number: int, content: str) -> str:
-    """
-    Insert content at a specific line number (1-indexed).
-    This is implemented as a surgical edit for safety.
-    """
+# --- 6. GREP SEARCH TOOL ---
+class GrepSearchArgs(BaseModel):
+    pattern: str = Field(..., description="Regex pattern to search for.")
+    path: str = Field(default=".", description="Directory to search within.")
+
+@tool(args_schema=GrepSearchArgs)
+def grep_search(pattern: str, path: str = ".") -> str:
+    """Search for a regex pattern across all files in a directory."""
     try:
-        # Read the entire file to find context
-        # In a real system, we might only read a window
-        full_content_numbered = _CURRENT_BACKEND.read(path, offset=0, limit=10000)
-        if full_content_numbered.startswith("Error"):
-            return full_content_numbered
+        target = _resolve_path(path)
+        if not target.is_dir():
+            return f"Error: '{path}' is not a directory."
+
+        regex = re.compile(pattern)
+        matches =[]
+        
+        for root, dirs, files in os.walk(target):
+            # Ignore hidden/build directories to speed up search
+            dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
             
-        lines = [line.split("|", 1)[1][1:] if "|" in line else "" for line in full_content_numbered.splitlines()]
-        
-        if line_number < 1 or line_number > len(lines) + 1:
-            return f"Error: Line {line_number} is out of range (1-{len(lines)+1})"
-        
-        if line_number <= len(lines):
-            # Replacing a line with (new_content + original_line)
-            # We use the original line as anchor
-            anchor = lines[line_number - 1]
-            new_val = content + ("\n" if not content.endswith("\n") else "") + anchor
-            result = _CURRENT_BACKEND.edit(path, old_string=anchor, new_string=new_val)
-        else:
-            # Appending to end
-            anchor = lines[-1]
-            new_val = anchor + ("\n" if not anchor.endswith("\n") else "") + content
-            result = _CURRENT_BACKEND.edit(path, old_string=anchor, new_string=new_val)
-            
-        if result.error:
-            return f"Error applying insertion: {result.error}"
-        return f"Successfully inserted content at line {line_number}"
-    except Exception as e:
-        return f"Error inserting at line: {e}"
+            for file in files:
+                file_path = Path(root) / file
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        for line_num, line in enumerate(f, 1):
+                            if regex.search(line):
+                                rel_path = file_path.relative_to(WORKSPACE_ROOT)
+                                matches.append(f"{rel_path}:{line_num}: {line.strip()}")
+                                if len(matches) >= 100:  # Cap results early
+                                    break
+                except UnicodeDecodeError:
+                    continue  # Skip binary files seamlessly
+                    
+            if len(matches) >= 100:
+                matches.append("... [More than 100 matches found, truncating]")
+                break
 
-
-@tool
-def edit_lines(path: str, start_line: int, end_line: int, new_content: str) -> str:
-    """
-    Replace a range of lines (1-indexed, inclusive) with new content.
-    Uses surgical edit for safety.
-    """
-    try:
-        # Read the specific range to get the 'old_string'
-        old_block_raw = _CURRENT_BACKEND.read(path, offset=start_line - 1, limit=end_line - start_line + 1)
-        if old_block_raw.startswith("Error"):
-            return old_block_raw
-            
-        # Strip the line numbers added by read()
-        old_lines = [line.split("|", 1)[1][1:] if "|" in line else "" for line in old_block_raw.splitlines()]
-        old_string = "\n".join(old_lines)
-        
-        result = _CURRENT_BACKEND.edit(path, old_string=old_string, new_string=new_content)
-        if result.error:
-            return f"Error applying line edit: {result.error}"
-        return f"Successfully edited lines {start_line}-{end_line}"
-    except Exception as e:
-        return f"Error editing lines: {e}"
-
-
-@tool
-def grep_search(pattern: str, path: str = ".", glob: Optional[str] = None) -> str:
-    """Search for a regex pattern in file contents."""
-    try:
-        results = _CURRENT_BACKEND.grep_raw(pattern, path, glob)
-        if isinstance(results, str):
-            return results  # Error message
-        
-        if not results:
-            return "No matches found."
-        
-        lines = []
-        for m in results:
-            lines.append(f"{m.path}:{m.line}: {m.text}")
-        return "\n".join(lines[:100])  # Limit output
+        return "\n".join(matches) if matches else "No matches found."
+    except re.error as e:
+        return f"Error: Invalid regex pattern - {e}"
     except Exception as e:
         return f"Error searching files: {e}"
 
 
-__all__ = [
-    "ls", 
-    "read_file", 
-    "write_file", 
-    "edit_file", 
-    "delete_file", 
-    "insert_at_line", 
-    "edit_lines", 
-    "grep_search", 
-    "set_backend"
-]
+# Bundled List for Agent Integration
+FS_TOOLS =[ls, read_file, write_file, edit_file, delete_file, grep_search]

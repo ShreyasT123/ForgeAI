@@ -1,0 +1,6 @@
+{"ts": 1774518572.0928023, "event": "tool.call", "session_id": "dev-session-001", "tool": "run_command", "duration_ms": 68}
+{"ts": 1774518578.0355208, "event": "tool.call", "session_id": "dev-session-001", "tool": "run_command", "duration_ms": 2814}
+{"ts": 1774518585.835993, "event": "tool.call", "session_id": "dev-session-001", "tool": "write_file", "duration_ms": 11}
+{"ts": 1774518591.1600132, "event": "tool.call", "session_id": "dev-session-001", "tool": "run_command", "duration_ms": 2338}
+{"ts": 1774518646.30782, "event": "tool.call", "session_id": "dev-session-001", "tool": "run_command", "duration_ms": 13128}
+{"ts": 1774518696.7190313, "event": "tool.call", "session_id": "dev-session-001", "tool": "write_file", "duration_ms": 15}

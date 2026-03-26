@@ -51,8 +51,8 @@ export async function parseRuleFile(
   let title = ''
   let titleLine = 0
   for (let i = 0; i < ruleLines.length; i++) {
-    if (ruleLines[i].startsWith('##')) {
-      title = ruleLines[i].replace(/^##+\s*/, '').trim()
+    if (ruleLines[i].startsWith('#')) {
+      title = ruleLines[i].replace(/^#+\s*/, '').trim()
       titleLine = i
       break
     }
@@ -234,7 +234,11 @@ export async function parseRuleFile(
   }
 
   // Fall back to frontmatter section if specified
-  section = frontmatter.section || section || 0
+  if (frontmatter.section !== undefined) {
+    const parsedSection = Number(frontmatter.section)
+    section = Number.isFinite(parsedSection) ? parsedSection : section
+  }
+  section = section || 0
 
   const rule: Rule = {
     id: '', // Will be assigned by build script based on sorted order

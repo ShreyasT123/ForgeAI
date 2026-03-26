@@ -1,180 +1,128 @@
-"""skills_tools.py — Thread-safe skill registry for a coding agent.
-
-A "skill" is a named prompt snippet the agent can load into its context
-to gain specialised guidance (e.g. "write idiomatic Rust", "follow project
-conventions", "generate OpenAPI specs").
-"""
-
-
-import logging
-import os
 import re
-import threading
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Optional
 
-from langchain.tools import tool
+from pydantic import BaseModel, Field
+from langchain_core.tools import tool
 
-logger = logging.getLogger(__name__)
+# --- Configuration & Security ---
+WORKSPACE_ROOT = Path.cwd().resolve()
+DEFAULT_SKILLS_DIR = WORKSPACE_ROOT / "skills"
 
-# ---------------------------------------------------------------------------
-# Data model
-# ---------------------------------------------------------------------------
+# Search paths for progressive disclosure skills
+SKILL_SEARCH_DIRS =[
+    DEFAULT_SKILLS_DIR,
+    WORKSPACE_ROOT / "agent-skills" / "skills",
+    WORKSPACE_ROOT / ".helius-code" / "skills"
+]
 
-@dataclass(frozen=True)
-class Skill:
-    name: str
-    description: str
-    content: str
-    tags: Tuple[str, ...] = field(default_factory=tuple)
-    source_path: Optional[str] = None
+def _sanitize_name(name: str) -> str:
+    """Sanitize skill names to prevent path traversal (e.g., ../../etc/passwd)."""
+    return re.sub(r"[^a-zA-Z0-9_-]", "-", name.strip()).strip("-")
 
-    def summary(self) -> str:
-        return f"- {self.name}: {self.description}"
+def _get_skill_description(content: str, default_name: str) -> str:
+    """Extract a brief description from the first non-empty line of the file."""
+    for line in content.splitlines():
+        line = line.strip()
+        # Skip generic markdown headers or frontmatter delimiters
+        if line and not line.startswith("---") and not line.startswith("# " + default_name):
+            return line.lstrip("#").strip()
+    return f"Domain knowledge for {default_name}"
 
-# ---------------------------------------------------------------------------
-# Registry
-# ---------------------------------------------------------------------------
 
-class SkillRegistry:
-    def __init__(self) -> None:
-        self._skills: Dict[str, Skill] = {}
-        self._lock = threading.RLock()
+# --- 1. LIST SKILLS TOOL ---
+class ListSkillsArgs(BaseModel):
+    query: Optional[str] = Field(default=None, description="Optional search query to filter skills.")
 
-    def register(
-        self,
-        name: str,
-        description: str,
-        content: str,
-        tags: Optional[List[str]] = None,
-        source_path: Optional[str] = None,
-        overwrite: bool = False,
-    ) -> None:
-        with self._lock:
-            if name in self._skills and not overwrite:
-                return
-            self._skills[name] = Skill(
-                name=name,
-                description=description,
-                content=str(content),
-                tags=tuple(tags or []),
-                source_path=source_path,
-            )
+@tool(args_schema=ListSkillsArgs)
+def list_skills(query: Optional[str] = None) -> str:
+    """
+    List all available specialized skills (prompts) that can be loaded.
+    Use this to discover available domain expertise (e.g., SQL, React, Rust conventions).
+    """
+    found_skills =[]
+    processed_names = set()
 
-    def get(self, name: str) -> Optional[Skill]:
-        with self._lock:
-            return self._skills.get(name)
-
-    def list_all(self) -> List[Skill]:
-        with self._lock:
-            return list(self._skills.values())
-
-    def available_names(self) -> str:
-        with self._lock:
-            return ", ".join(sorted(self._skills.keys()))
-
-_REGISTRY = SkillRegistry()
-
-def _get_repo_root() -> Path:
-    return Path(os.getenv("REPO_ROOT", ".")).resolve()
-
-def _parse_frontmatter(content: str) -> Tuple[Dict[str, str], str]:
-    """Extremely simple frontmatter parser (--- ... ---)."""
-    match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
-    if not match:
-        return {}, content
-    
-    fm_raw = match.group(1)
-    body = content[match.end():]
-    data = {}
-    for line in fm_raw.splitlines():
-        if ":" in line:
-            k, v = line.split(":", 1)
-            data[k.strip()] = v.strip()
-    return data, body
-
-def load_skills_from_directory(directory: Path, overwrite: bool = False):
-    if not directory.is_dir():
-        return
-    
-    # Track which paths we've processed as subdirectories to avoid duplicate loading
-    processed_subdirs = set()
-
-    for p in directory.rglob("*"):
-        if not p.is_file():
+    for directory in SKILL_SEARCH_DIRS:
+        if not directory.is_dir():
             continue
             
-        if p.suffix.lower() not in [".md", ".txt"]:
-            continue
-
-        skill_name = p.stem
-        raw = p.read_text(encoding="utf-8")
-        fm, body = _parse_frontmatter(raw)
-        
-        # Determine skill name and description
-        if "name" in fm:
-            skill_name = fm["name"]
-        elif p.name.lower() in ["skill.md", "readme.md", "agents.md"]:
-            # Use parent directory name if it's a generic file name
-            skill_name = p.parent.name
-            if p.parent in processed_subdirs and p.name.lower() != "agents.md":
-                # Favor AGENTS.md if multiple are present in same dir
+        for p in directory.rglob("*.md"):
+            if not p.is_file():
                 continue
-            processed_subdirs.add(p.parent)
+                
+            skill_name = p.stem
+            if skill_name in processed_names:
+                continue
+                
+            content = p.read_text(encoding="utf-8", errors="ignore")
+            description = _get_skill_description(content, skill_name)
+            
+            # Filter if query is provided
+            if query and query.lower() not in skill_name.lower() and query.lower() not in description.lower():
+                continue
+                
+            processed_names.add(skill_name)
+            found_skills.append(f"- {skill_name}: {description[:100]}...")
 
-        if "description" in fm:
-            description = fm["description"]
-        else:
-            description = next((ln.lstrip("#").strip() for ln in body.splitlines() if ln.strip()), f"Skill: {skill_name}")
+    if not found_skills:
+        return "No skills currently registered or found."
+        
+    return "Available Specialized Skills:\n" + "\n".join(sorted(found_skills))
 
-        _REGISTRY.register(
-            name=skill_name, 
-            description=description, 
-            content=raw, 
-            source_path=str(p), 
-            overwrite=overwrite
-        )
 
-# Auto-load from skills/ and agent-skills/skills/
-repo_root = _get_repo_root()
-load_skills_from_directory(repo_root / "skills")
-load_skills_from_directory(repo_root / "agent-skills" / "skills")
+# --- 2. LOAD SKILL TOOL ---
+class LoadSkillArgs(BaseModel):
+    skill_name: str = Field(..., description="The exact name of the skill to load (without .md extension).")
 
-# ---------------------------------------------------------------------------
-# LangChain tools
-# ---------------------------------------------------------------------------
-
-@tool("list_skills")
-def list_skills(query: Optional[str] = None) -> str:
-    """List all available specialized skills (prompts) that can be loaded."""
-    skills = _REGISTRY.list_all()
-    if not skills: return "No skills registered."
-    return "Available Skills:\n" + "\n".join(s.summary() for s in sorted(skills, key=lambda s: s.name))
-
-@tool("load_skill")
+@tool(args_schema=LoadSkillArgs)
 def load_skill(skill_name: str) -> str:
     """
-    Load a specialized skill's prompt and context into memory.
-    Use this to get expert guidance on specific domains (SQL, React, etc).
+    Load a specialized skill's instructions into memory.
+    Use this to gain strict project guidelines BEFORE generating code.
     """
-    skill = _REGISTRY.get(skill_name)
-    if not skill:
-        return f"Skill '{skill_name}' not found. Available: {_REGISTRY.available_names()}"
-    return f"--- SKILL LOADED: {skill.name} ---\n{skill.content}\n--- END SKILL ---"
+    safe_name = _sanitize_name(skill_name)
+    
+    for directory in SKILL_SEARCH_DIRS:
+        target = directory / f"{safe_name}.md"
+        if target.is_file():
+            try:
+                content = target.read_text(encoding="utf-8")
+                return f"--- SKILL LOADED: {safe_name} ---\n{content}\n--- END SKILL ---"
+            except Exception as e:
+                return f"Error reading skill file: {str(e)}"
+                
+    return f"Error: Skill '{skill_name}' not found. Run `list_skills` to see available options."
 
-@tool("register_skill")
+
+# --- 3. REGISTER SKILL TOOL ---
+class RegisterSkillArgs(BaseModel):
+    name: str = Field(..., description="A short, slugified name for the skill (e.g., 'react-hooks').")
+    description: str = Field(..., description="A 1-sentence summary of what this skill teaches.")
+    content: str = Field(..., description="The full markdown instructions/prompt for the skill.")
+
+@tool(args_schema=RegisterSkillArgs)
 def register_skill(name: str, description: str, content: str) -> str:
-    """Register a new specialized skill for future use."""
+    """
+    Register a new specialized skill for future use.
+    Saves domain knowledge to the repository so you (and future agents) can reload it later.
+    """
     try:
-        _REGISTRY.register(name, description, content, overwrite=True)
-        # Also persist to skills/ dir
-        repo_root = _get_repo_root()
-        skills_dir = repo_root / "skills"
-        skills_dir.mkdir(exist_ok=True)
-        (skills_dir / f"{name}.md").write_text(f"# {name}\n{description}\n\n{content}", encoding="utf-8")
-        return f"Skill '{name}' registered and persisted successfully."
-    except Exception as e:
-        return f"Error registering skill: {e}"
+        safe_name = _sanitize_name(name)
+        if not safe_name:
+            return "Error: Invalid skill name provided."
 
-__all__ = ["list_skills", "load_skill", "register_skill", "load_skills_from_directory"]
+        DEFAULT_SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+        target = DEFAULT_SKILLS_DIR / f"{safe_name}.md"
+        
+        # Format the file with a clear header so list_skills can parse it cleanly
+        formatted_content = f"# {safe_name}\n{description}\n\n{content}"
+        
+        target.write_text(formatted_content, encoding="utf-8")
+        return f"Successfully registered and persisted skill '{safe_name}' at {target.relative_to(WORKSPACE_ROOT)}."
+        
+    except Exception as e:
+        return f"Error registering skill: {str(e)}"
+
+# Bundle for DeepAgents
+SKILLS_TOOLS =[list_skills, load_skill, register_skill]

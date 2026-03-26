@@ -6,90 +6,76 @@ from langgraph.types import Command
 
 logger = logging.getLogger(__name__)
 
-# HITL_BYPASS_TOKEN environment variable enables secure bypassing in CI/CD.
+# Secure CI/CD bypass token
 HITL_BYPASS_ENV = os.getenv("HITL_BYPASS_TOKEN")
 
-
-def _auto_resume_payload(approve: bool, reason: str = None) -> Dict[str, Any]:
-    """Format the payload for resuming an agent after an interrupt."""
-    if approve:
-        return {
-            "decisions": [{"type": "approve", "message": reason or "auto-approved"}]
-        }
-    else:
-        return {"decisions": [{"type": "reject", "message": reason or "rejected"}]}
-
-
-def handle_hitl_interrupt(agent: Any, config: Dict[str, Any], interactive: bool = True) -> Any:
+def handle_hitl_interrupt(agent: Any, config: Dict[str, Any], interactive: bool = True) -> Optional[Any]:
     """
-    Inspect agent state for interrupts and handle them via bypass token or user input.
-
-    - If config contains hitl.bypass==True and the provided token matches HITL_BYPASS_TOKEN -> auto approve.
-    - Else if interactive -> prompt user to approve/reject via stdin.
-    - Else -> return a structured error (hitl_required).
-
+    Processes pending Human-In-The-Loop (HITL) interrupts in the LangGraph state.
+    
+    Args:
+        agent: The compiled LangGraph / DeepAgent.
+        config: The LangGraph config dict (must contain thread_id).
+        interactive: Whether to prompt via CLI if no bypass token is provided.
+        
     Returns:
-      - The result of agent.invoke(Command(resume=...)) if resolved.
-      - A status dict if rejected or if manual intervention is required.
+        The new graph state after resumption, or None if no interrupts were pending.
     """
     state = agent.get_state(config)
-    if not getattr(state, "tasks", None):
-        return {"status": "no_tasks"}
-
-    # find first task with interrupts
+    
+    # 1. Check if the graph is actually paused on an interrupt
+    if not state.next or not state.tasks:
+        return None
+        
     task = state.tasks[0]
-    if not getattr(task, "interrupts", None):
-        return {"status": "no_interrupts"}
+    if not task.interrupts:
+        return None
 
-    interrupt_value = task.interrupts[0].value
-    # Action request payload shape usually contains action_requests
-    action_requests = interrupt_value.get("action_requests", [{}])
-    action_request = action_requests[0] if action_requests else {}
+    # 2. Extract the payload yielded by the tool's `interrupt({...})` call
+    interrupt_payload = task.interrupts[0].value
+    
+    # Supports both our custom tools and generic action requests
+    cmd_name = interrupt_payload.get("command") or interrupt_payload.get("name") or "Unknown Action"
+    reason = interrupt_payload.get("reason") or "No justification provided by agent."
 
-    logger.info("HITL Interrupt found for tool: %s", action_request.get("name"))
+    logger.info("HITL Interrupt paused execution for tool: %s", cmd_name)
 
-    # Check bypass config: config["hitl"] = {"bypass": True, "bypass_token": "TOKEN"}
-    hitl_cfg = (config or {}).get("hitl") or {}
-    bypass_flag = bool(hitl_cfg.get("bypass"))
-    provided_token = hitl_cfg.get("bypass_token")
+    # 3. Check for CI/CD Bypass Token via LangGraph's standard 'configurable' dict
+    configurable = config.get("configurable", {})
+    provided_token = configurable.get("hitl_bypass_token")
 
-    # Secure bypass: environment token must be set and must match provided_token
-    if bypass_flag:
+    if provided_token:
         if not HITL_BYPASS_ENV:
-            logger.warning(
-                "Bypass requested but no HITL_BYPASS_TOKEN set in environment. Denying."
-            )
-        elif provided_token and provided_token == HITL_BYPASS_ENV:
-            logger.info("Bypass token validated. Auto-approving the action.")
-            resume_payload = _auto_resume_payload(True, reason="bypassed-by-token")
-            return agent.invoke(Command(resume=resume_payload), config)
+            logger.warning("Bypass requested but HITL_BYPASS_TOKEN is not set in environment.")
+        elif provided_token == HITL_BYPASS_ENV:
+            logger.info("✅ Bypass token validated. Auto-approving dangerous action.")
+            return agent.invoke(Command(resume={"approved": True}), config)
         else:
-            logger.warning("Bypass token mismatch. Falling back to interactive/deny.")
+            logger.warning("❌ Bypass token mismatch! Falling back to interactive mode.")
 
-    # Interactive approval
+    # 4. Interactive CLI Approval
     if interactive:
-        print("\n=== HUMAN-IN-THE-LOOP INTERRUPT ===")
-        print(f"Tool: {action_request.get('name')}")
-        print(f"Args: {action_request.get('args')}")
-        user_in = (
-            input("\nApprove action? (y = approve / n = reject): ").strip().lower()
-        )
-        if user_in == "y":
-            resume_payload = _auto_resume_payload(True)
-            return agent.invoke(Command(resume=resume_payload), config)
+        print("\n" + "="*60)
+        print("🛑 HUMAN-IN-THE-LOOP AUTHORIZATION REQUIRED 🛑")
+        print(f"Requested Action : {cmd_name}")
+        print(f"Agent's Reason   : {reason}")
+        print("="*60)
+        
+        user_in = input("\nApprove execution? (y/N): ").strip().lower()
+        is_approved = user_in in ('y', 'yes')
+        
+        if is_approved:
+            logger.info("Human approved the action.")
         else:
-            resume_payload = _auto_resume_payload(False, reason="rejected-by-user")
-            agent.invoke(Command(resume=resume_payload), config)
-            return {"status": "rejected-by-user"}
-    else:
-        # Non-interactive and bypass not available -> signal caller to decide
-        return {
-            "error": "hitl_required",
-            "action_request": {
-                "name": action_request.get("name"),
-                "args": action_request.get("args"),
-            },
-        }
+            logger.info("Human rejected the action.")
+            
+        # Resume the graph, passing the boolean decision back to the tool
+        return agent.invoke(Command(resume={"approved": is_approved}), config)
 
+    # 5. Non-interactive & No bypass -> Force Reject
+    # We MUST resume the graph with a rejection. If we just return an error string, 
+    # the graph remains indefinitely suspended and the agent loop breaks.
+    logger.error("HITL required but interactive mode is off and no valid bypass token provided. Auto-rejecting.")
+    return agent.invoke(Command(resume={"approved": False, "error": "interactive_mode_disabled"}), config)
 
-__all__ = ["handle_hitl_interrupt", "HITL_BYPASS_ENV"]
+__all__ =["handle_hitl_interrupt", "HITL_BYPASS_ENV"]

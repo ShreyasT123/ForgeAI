@@ -1,388 +1,198 @@
-"""shell_tools.py — Safe subprocess execution primitives for a coding agent.
-
-Security model
---------------
-* All commands run inside REPO_ROOT (path-traversal guard on cwd).
-* An allowlist gates which executables are accepted at all.
-* A separate dangerous-set requires HITL confirmation or a bypass token.
-* resource limits are applied on Unix (CPU cap) and Windows (psutil monitor).
-* shell=False always — no shell injection possible.
-"""
-
-import json
-import logging
 import os
 import platform
 import shlex
+import shutil
 import subprocess
 import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Dict, List, Optional, Any
 
+from pydantic import BaseModel, Field
 from langchain_core.tools import tool
+from langgraph.types import interrupt
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# --- Security Configuration ---
+WORKSPACE_ROOT = Path.cwd().resolve()
 
-# ---------------------------------------------------------------------------
-# REPO_ROOT
-# ---------------------------------------------------------------------------
+# Strict allowlist: Only these root executables can be invoked.
+ALLOWLIST = frozenset({
+    "pwd", "ls", "dir", "echo", "cat", "type", "uname", "whoami", "hostname",
+    "git", "python", "python3", "pip", "pytest", "uv","node", "npm", "npx", "yarn", "tsc",
+    "java", "javac", "go", "gcc", "g++", "rustc", "cargo", "make", "cmake", "docker",
+    "grep", "find", "sort", "head", "tail", "clear", "cls"
+})
 
+# Dangerous subset: Allowed, but ALWAYS trigger Human-In-The-Loop.
+DANGEROUS = frozenset({
+    "rm", "del", "rmdir",  
+})
 
-def _get_repo_root() -> Path:
-    return Path(os.getenv("REPO_ROOT", ".")).resolve()
+# In-memory tracking for background jobs (like `npm run dev`)
+_ACTIVE_JOBS: Dict[str, subprocess.Popen] = {}
+_JOB_LOGS: Dict[str, List[str]] = {}
 
+# --- Internal Helpers ---
+def _resolve_cwd(cwd: Optional[str]) -> Path:
+    """Ensure the target directory is strictly within REPO_ROOT."""
+    target = (WORKSPACE_ROOT / cwd).resolve() if cwd else WORKSPACE_ROOT
+    if not target.is_relative_to(WORKSPACE_ROOT):
+        raise ValueError(f"Security Error: cwd '{cwd}' escapes the repository root.")
+    target.mkdir(parents=True, exist_ok=True)
+    return target
 
-# ---------------------------------------------------------------------------
-# HITL bypass token (optional CI integration)
-# ---------------------------------------------------------------------------
-
-SHELL_BYPASS_TOKEN_ENV: Optional[str] = os.getenv("SHELL_BYPASS_TOKEN")
-
-# ---------------------------------------------------------------------------
-# Allowlist / dangerous set
-# ---------------------------------------------------------------------------
-
-DEFAULT_ALLOWLIST: frozenset[str] = frozenset(
-    {
-        "pwd", "ls", "dir", "echo", "cat", "type", "uname", "whoami", "hostname",
-        "uptime", "df", "du", "free", "top", "htop", "tasklist", "systeminfo",
-        "git", "hg", "svn", "python", "python3", "pip", "pip3", "pytest", "ipython",
-        "jupyter", "conda", "poetry", "virtualenv", "node", "npm", "npx", "yarn", "tsc",
-        "java", "javac", "jar", "gradle", "mvn", "go", "gcc", "g++", "rustc", "cargo",
-        "make", "cmake", "bazel", "docker", "docker-compose", "kubectl", "minikube",
-        "kind", "helm", "aws", "az", "gcloud", "terraform", "vault", "ping", "traceroute",
-        "nslookup", "dig", "curl", "wget", "scp", "ssh", "netstat", "lsof", "ip",
-        "ifconfig", "route", "arp", "vim", "nano", "emacs", "code", "subl", "notepad",
-        "notepad++", "sed", "awk", "grep", "find", "sort", "uniq", "cut", "head", "tail",
-        "xargs", "env", "set", "clear", "cls",
-    }
-)
-
-DANGEROUS_COMMANDS: frozenset[str] = frozenset(
-    {
-        "rm", "del", "rmdir", "mv", "cp", "format", "diskpart", "chown", "chmod",
-        "attrib", "shutdown", "reboot", "poweroff", "systemctl", "service", "init",
-        "apt", "yum", "dnf", "pacman", "brew", "choco", "scoop", "docker",
-        "docker-compose", "kubectl", "helm", "terraform", "curl", "wget", "scp",
-        "ssh", "ftp", "rsync", "netcat", "nc", "telnet", "python", "python3",
-        "node", "npm", "npx", "java", "javac", "go", "cargo", "rustc", "gcc", "g++",
-    }
-)
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-
-def _safe_cwd(cwd: Optional[str]) -> Path:
-    repo_root = _get_repo_root()
-    if not cwd:
-        return repo_root
-    p = (repo_root / cwd).resolve()
-    try:
-        p.relative_to(repo_root)
-    except ValueError:
-        raise ValueError(f"Access denied: cwd '{cwd}' escapes REPO_ROOT")
-    if not p.exists():
-        raise FileNotFoundError(f"cwd '{cwd}' does not exist under REPO_ROOT")
-    return p
-
-
-def _split_command(cmd: Union[str, List[str]]) -> List[str]:
-    if isinstance(cmd, list):
-        return [str(a) for a in cmd]
-    posix = not platform.system().lower().startswith("win")
-    return shlex.split(cmd, posix=posix)
-
-
-def _top_command_name(args: List[str]) -> str:
-    return Path(args[0]).name if args else ""
-
-
-def _is_allowed(cmd_name: str, allowlist: frozenset[str]) -> bool:
-    return cmd_name.lower() in {c.lower() for c in allowlist}
-
-
-def _is_dangerous(cmd_name: str) -> bool:
-    return cmd_name.lower() in {c.lower() for c in DANGEROUS_COMMANDS}
-
-
-def _normalize_windows_exec(args: List[str]) -> List[str]:
-    if platform.system().lower() != "windows" or not args:
-        return args
-    cmd = args[0].lower()
-    if cmd in {"npm", "npx", "yarn"}:
-        return ["cmd", "/c"] + args
-    return args
-
-
-# ---------------------------------------------------------------------------
-# Audit log
-# ---------------------------------------------------------------------------
-
-
-def _mk_audit_entry(request: Dict[str, Any], result: Dict[str, Any]) -> None:
-    try:
-        audit_dir = _get_repo_root() / ".agent_audit"
-        audit_dir.mkdir(parents=True, exist_ok=True)
-        entry = {"ts": time.time(), "request": request, "result": result}
-        with open(audit_dir / "commands.jsonl", "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
-    except Exception:
-        logger.exception("Failed to write audit log")
-
-
-# ---------------------------------------------------------------------------
-# Background job infrastructure
-# ---------------------------------------------------------------------------
-
-
-def _get_jobs_dir() -> Path:
-    jobs_dir = _get_repo_root() / ".agent_audit" / "jobs"
-    jobs_dir.mkdir(parents=True, exist_ok=True)
-    return jobs_dir
-
-
-def _write_job_meta(path: Path, data: Dict[str, Any]) -> None:
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    os.replace(str(tmp), str(path))
-
-
-def _load_job_meta(path: Path) -> Dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _tail_lines(path: Path, max_lines: int) -> str:
-    if not path.exists():
-        return ""
-    with open(path, "r", encoding="utf-8", errors="replace") as f:
-        lines = f.readlines()
-    return "".join(lines[-max_lines:])
-
-
-def _monitor_process_resource_limits(proc: subprocess.Popen, cpu_limit: int = 120):
-    """Thread-based resource monitor for Windows or as fallback."""
-    try:
-        import psutil
-        p = psutil.Process(proc.pid)
-        while proc.poll() is None:
-            try:
-                # Check CPU time
-                cpu_times = p.cpu_times()
-                total_cpu = cpu_times.user + cpu_times.system
-                if total_cpu > cpu_limit:
-                    logger.warning("Process %d exceeded CPU limit (%ds). Terminating.", proc.pid, cpu_limit)
-                    # Kill process and all children
-                    for child in p.children(recursive=True):
-                        child.kill()
-                    p.kill()
-                    return
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                break
-            time.sleep(2)
-    except ImportError:
-        # Fallback to simple wall-clock if psutil not available
-        t0 = time.time()
-        while proc.poll() is None:
-            if time.time() - t0 > cpu_limit * 2: # Grace period for wall clock
-                logger.warning("Process %d exceeded wall-clock limit. Terminating.", proc.pid)
-                proc.kill()
-                return
-            time.sleep(5)
-
-
-def _start_background_job(
-    args: List[str], cwd: Optional[str], request: Dict[str, Any]
-) -> str:
-    jobs_dir = _get_jobs_dir()
-    job_id = uuid.uuid4().hex
-    job_dir = jobs_dir / job_id
-    job_dir.mkdir(parents=True, exist_ok=True)
-
-    stdout_path = job_dir / "stdout.txt"
-    stderr_path = job_dir / "stderr.txt"
-    rc_path = job_dir / "returncode.json"
-    meta_path = job_dir / "job.json"
-
-    run_cwd = _safe_cwd(cwd)
-
-    job_meta: Dict[str, Any] = {
-        "job_id": job_id, "cmd_args": args, "cwd": str(run_cwd),
-        "status": "running", "stdout_path": str(stdout_path),
-        "stderr_path": str(stderr_path), "returncode_path": str(rc_path),
-        "started_at": time.time(), "pid": None,
-    }
-
-    stdout_f = open(stdout_path, "w", encoding="utf-8")
-    stderr_f = open(stderr_path, "w", encoding="utf-8")
-
-    proc = subprocess.Popen(
-        args, cwd=str(run_cwd), stdout=stdout_f, stderr=stderr_f,
-        text=True, shell=False, preexec_fn=_make_preexec_fn()
-    )
-    job_meta["pid"] = proc.pid
-    _write_job_meta(meta_path, job_meta)
-
-    # Resource monitor for Windows (since preexec_fn=None)
-    if platform.system().lower() == "windows":
-        threading.Thread(target=_monitor_process_resource_limits, args=(proc,), daemon=True).start()
-
-    def _wait() -> None:
-        try:
-            rc = proc.wait()
-        except Exception:
-            rc = -1
-        finally:
-            stdout_f.close()
-            stderr_f.close()
-
-        now = time.time()
-        job_meta.update({"status": "finished", "returncode": rc, "finished_at": now})
-        _write_job_meta(meta_path, job_meta)
-        rc_path.write_text(json.dumps({"returncode": rc, "finished_at": now}), encoding="utf-8")
-
-    threading.Thread(target=_wait, daemon=True, name=f"job-{job_id[:8]}").start()
-
-    result: Dict[str, Any] = {"job_id": job_id, "status": "running", "pid": proc.pid}
-    _mk_audit_entry(request, result)
-    return json.dumps(result, indent=2)
-
-
-def _make_preexec_fn():
+def _get_resource_limits_fn():
+    """Apply CPU and File Descriptor limits on Unix systems to prevent fork bombs."""
     if platform.system().lower() == "windows":
         return None
     try:
         import resource
-        def _limit_child() -> None:
+        def preexec():
+            # Limit to 120 seconds of pure CPU time
             resource.setrlimit(resource.RLIMIT_CPU, (120, 120))
             try:
-                _soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+                _, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
                 resource.setrlimit(resource.RLIMIT_NOFILE, (min(4096, hard), hard))
             except Exception:
                 pass
-        return _limit_child
+        return preexec
     except ImportError:
         return None
 
-
-# ---------------------------------------------------------------------------
-# Public tools
-# ---------------------------------------------------------------------------
-
-
-@tool("run_command")
-def run_command(
-    cmd: Union[str, List[str]], cwd: Optional[str] = None,
-    timeout: Optional[int] = 30, capture_output: bool = True,
-    dry_run: bool = False, allowlist: Optional[List[str]] = None,
-    require_confirmation: bool = False, bypass_token: Optional[str] = None,
-    background: bool = False,
-) -> str:
-    """Execute a command safely inside REPO_ROOT."""
-    request = locals()
+def _windows_resource_monitor(proc: subprocess.Popen, cpu_limit: int = 120):
+    """Fallback CPU monitor for Windows background processes."""
     try:
-        args = _split_command(cmd)
-        if not args: return json.dumps({"error": "empty_command"})
-        cmd_name = _top_command_name(args)
-        effective_allowlist = frozenset(allowlist) if allowlist else DEFAULT_ALLOWLIST
+        import psutil
+        p = psutil.Process(proc.pid)
+        while proc.poll() is None:
+            cpu_times = p.cpu_times()
+            if (cpu_times.user + cpu_times.system) > cpu_limit:
+                for child in p.children(recursive=True):
+                    child.kill()
+                p.kill()
+                return
+            time.sleep(2)
+    except Exception:
+        pass # Fail gracefully if psutil is missing
 
-        if not _is_allowed(cmd_name, effective_allowlist):
-            return json.dumps({"error": "command_not_in_allowlist", "cmd_name": cmd_name}, indent=2)
+def _capture_background_logs(job_id: str, stream, prefix: str):
+    """Continuously read background logs into memory."""
+    for line in iter(stream.readline, ''):
+        if line:
+            _JOB_LOGS[job_id].append(f"[{prefix}] {line.strip()}")
+            # Keep only the last 500 lines to prevent OOM
+            if len(_JOB_LOGS[job_id]) > 500:
+                _JOB_LOGS[job_id] = _JOB_LOGS[job_id][-500:]
 
-        if _is_dangerous(cmd_name) and require_confirmation:
-            if not (bypass_token and SHELL_BYPASS_TOKEN_ENV and bypass_token == SHELL_BYPASS_TOKEN_ENV):
-                return json.dumps({"error": "hitl_required", "action_request": {"name": cmd_name, "args": args}}, indent=2)
+# --- 1. CORE RUN COMMAND TOOL ---
+class RunCmdArgs(BaseModel):
+    command: str = Field(..., description="The shell command to execute.")
+    cwd: Optional[str] = Field(default=None, description="Relative working directory.")
+    background: bool = Field(default=False, description="Set to True for long-running servers (e.g. 'npm start').")
 
-        if dry_run:
-            return json.dumps({"dry_run": True, "cmd_args": args, "cwd": str(_safe_cwd(cwd))}, indent=2)
-
-        exec_args = _normalize_windows_exec(args)
-        if background: return _start_background_job(exec_args, cwd, request)
-
-        completed = subprocess.run(
-            exec_args, cwd=str(_safe_cwd(cwd)),
-            stdout=subprocess.PIPE if capture_output else None,
-            stderr=subprocess.PIPE if capture_output else None,
-            timeout=timeout, check=False, shell=False, text=True,
-            preexec_fn=_make_preexec_fn()
-        )
-        result = {"returncode": completed.returncode, "stdout": completed.stdout, "stderr": completed.stderr}
-        _mk_audit_entry(request, result)
-        return json.dumps(result, indent=2)
-    except Exception as exc:
-        return json.dumps({"error": "exception", "message": str(exc)}, indent=2)
-
-
-@tool("get_command_status")
-def get_command_status(job_id: str) -> str:
-    """Check status of a background job."""
+@tool(args_schema=RunCmdArgs)
+def run_command(command: str, cwd: Optional[str] = None, background: bool = False) -> str:
+    """Execute a shell command securely. Use background=True for servers."""
     try:
-        meta_path = _get_jobs_dir() / job_id / "job.json"
-        if not meta_path.exists(): return json.dumps({"error": "job_not_found"})
-        meta = _load_job_meta(meta_path)
-        rc_path = meta_path.parent / "returncode.json"
-        if rc_path.exists():
-            rc_data = json.loads(rc_path.read_text(encoding="utf-8"))
-            meta.update({"status": "finished", **rc_data})
-        return json.dumps(meta, indent=2)
-    except Exception as e: return json.dumps({"error": str(e)})
+        args = shlex.split(command, posix=platform.system().lower() != "windows")
+        if not args:
+            return "Error: Empty command."
 
+        executable = args[0].lower()
 
-@tool("cleanup_audit_logs")
-def cleanup_audit_logs(days_to_keep: int = 7) -> str:
-    """Purge old audit logs and .bak files."""
-    repo_root = _get_repo_root()
-    audit_dir = repo_root / ".agent_audit"
-    now = time.time()
-    seconds_to_keep = days_to_keep * 86400
-    purged_count = 0
+        # 1. Allowlist Check
+        if executable not in ALLOWLIST:
+            return f"Security Error: Command '{executable}' is not in the allowlist."
 
-    if audit_dir.exists():
-        # Cleanup job dirs
-        jobs_dir = audit_dir / "jobs"
-        if jobs_dir.exists():
-            for d in jobs_dir.iterdir():
-                if d.is_dir() and (now - d.stat().st_mtime > seconds_to_keep):
-                    import shutil
-                    shutil.rmtree(d)
-                    purged_count += 1
+        # 2. HITL Check for Dangerous Commands
+        if executable in DANGEROUS:
+            response = interrupt({
+                "action": "approve_command",
+                "command": command,
+                "reason": f"'{executable}' is flagged as a potentially dangerous operation."
+            })
+            if not response.get("approved", False):
+                return "Error: Human denied permission to execute this command."
+
+        # 3. Path & Executable Resolution
+        run_cwd = _resolve_cwd(cwd)
         
-        # Could rotate commands.jsonl here if it was large
-    
-    # Cleanup .bak files in the repo
-    for bak_file in repo_root.rglob("*.bak"):
-        if now - bak_file.stat().st_mtime > seconds_to_keep:
-            bak_file.unlink()
-            purged_count += 1
+        # Windows requires resolving to .cmd or .exe if shell=False
+        resolved_exe = shutil.which(args[0])
+        if not resolved_exe:
+            return f"Error: Executable '{args[0]}' not found in PATH."
+        args[0] = resolved_exe
+
+        # 4. Background Execution
+        if background:
+            job_id = uuid.uuid4().hex[:8]
+            _JOB_LOGS[job_id] =[]
             
-    return json.dumps({"status": "success", "purged_items": purged_count})
+            proc = subprocess.Popen(
+                args, cwd=str(run_cwd),
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, shell=False, preexec_fn=_get_resource_limits_fn()
+            )
+            
+            _ACTIVE_JOBS[job_id] = proc
+            
+            # Start daemon threads to capture logs
+            threading.Thread(target=_capture_background_logs, args=(job_id, proc.stdout, "OUT"), daemon=True).start()
+            threading.Thread(target=_capture_background_logs, args=(job_id, proc.stderr, "ERR"), daemon=True).start()
+            
+            if platform.system().lower() == "windows":
+                threading.Thread(target=_windows_resource_monitor, args=(proc,), daemon=True).start()
 
-@tool("get_command_output")
-def get_command_output(job_id: str, tail_lines: int = 200) -> str:
-    """Fetch output from a background job."""
-    meta_path = _get_jobs_dir() / job_id / "job.json"
-    if not meta_path.exists(): return json.dumps({"error": "job_not_found"})
-    meta = _load_job_meta(meta_path)
-    return json.dumps({
-        "stdout": _tail_lines(Path(meta["stdout_path"]), tail_lines),
-        "stderr": _tail_lines(Path(meta["stderr_path"]), tail_lines)
-    })
+            return f"Started background job '{job_id}'. PID: {proc.pid}. Use `manage_background_job` to view logs or stop it."
 
-@tool("cancel_command")
-def cancel_command(job_id: str) -> str:
-    """Cancel a running background job."""
-    meta_path = _get_jobs_dir() / job_id / "job.json"
-    if not meta_path.exists(): return json.dumps({"error": "job_not_found"})
-    meta = _load_job_meta(meta_path)
-    if meta.get("status") == "finished": return json.dumps({"status": "already_finished"})
-    try:
-        os.kill(int(meta["pid"]), 15)
-        return json.dumps({"status": "cancel_requested"})
-    except Exception as e: return json.dumps({"error": str(e)})
+        # 5. Foreground Execution
+        result = subprocess.run(
+            args, cwd=str(run_cwd),
+            capture_output=True, text=True,
+            timeout=120, shell=False, preexec_fn=_get_resource_limits_fn()
+        )
+        
+        output = f"Exit Code: {result.returncode}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+        return output[:50000] + ("\n...[TRUNCATED]" if len(output) > 50000 else "")
 
-def run_command_raw(*args, **kwargs) -> str:
-    return run_command.func(*args, **kwargs)
+    except subprocess.TimeoutExpired:
+        return "Error: Command timed out after 120 seconds."
+    except Exception as e:
+        return f"Execution Error: {str(e)}"
+
+# --- 2. BACKGROUND JOB MANAGER TOOL ---
+class ManageJobArgs(BaseModel):
+    job_id: str = Field(..., description="The ID of the background job.")
+    action: str = Field(..., description="'logs' to view recent output, 'kill' to stop the job.")
+
+@tool(args_schema=ManageJobArgs)
+def manage_background_job(job_id: str, action: str) -> str:
+    """Read logs or kill a running background process."""
+    if job_id not in _ACTIVE_JOBS:
+        return f"Error: Job '{job_id}' not found. It may have already exited."
+
+    proc = _ACTIVE_JOBS[job_id]
+    
+    if action == "logs":
+        status = "RUNNING" if proc.poll() is None else f"EXITED ({proc.returncode})"
+        logs = "\n".join(_JOB_LOGS[job_id][-50:]) # Send last 50 lines to LLM
+        return f"Job Status: {status}\nRecent Logs:\n{logs or '(No output yet)'}"
+        
+    elif action == "kill":
+        if proc.poll() is not None:
+            return f"Job already exited with code {proc.returncode}."
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        
+        del _ACTIVE_JOBS[job_id]
+        del _JOB_LOGS[job_id]
+        return f"Successfully killed background job '{job_id}'."
+        
+    return "Error: Invalid action. Use 'logs' or 'kill'."
+
+# Bundle for DeepAgents
+SHELL_TOOLS = [run_command, manage_background_job]
