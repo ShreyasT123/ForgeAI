@@ -1,0 +1,107 @@
+agent:
+  model: "gemini-2.5-flash"
+  max_retries: 3
+  retry_delay_seconds: 2.0
+  thread_id_prefix: "session"
+  
+tools:
+  filesystem:
+    max_file_size_mb: 5
+    max_output_length: 50000
+    ignore_dirs:
+      - ".git"
+      - ".venv"
+      - "node_modules"
+      - "__pycache__"
+      - "dist"
+      - "build"
+
+  shell:
+    timeout_seconds: 120
+    max_output_length: 50000
+    max_background_log_lines: 500
+    allowlist:
+      - "pwd"
+      - "ls"
+      - "dir"
+      - "echo"
+      - "cat"
+      - "type"
+      - "uname"
+      - "whoami"
+      - "hostname"
+      - "git"
+      - "python"
+      - "python3"
+      - "pip"
+      - "pytest"
+      - "uv"
+      - "node"
+      - "npm"
+      - "npx"
+      - "yarn"
+      - "tsc"
+      - "java"
+      - "javac"
+      - "go"
+      - "gcc"
+      - "g++"
+      - "rustc"
+      - "bun"
+      - "cargo"
+      - "make"
+      - "cmake"
+      - "docker"
+      - "grep"
+      - "find"
+      - "sort"
+      - "head"
+      - "tail"
+      - "clear"
+      - "cls"
+      - "curl"
+      - "curl.exe"
+      - "iwr"
+    dangerous:
+      - "rm"
+      - "del"
+      - "rmdir"
+
+  git:
+    safe_commands:
+      - "status"
+      - "log"
+      - "diff"
+      - "show"
+      - "branch"
+      - "checkout"
+      - "switch"
+      - "add"
+      - "commit"
+      - "stash"
+      - "pull"
+      - "fetch"
+      - "rev-parse"
+    dangerous_commands:
+      - "reset"
+      - "merge"
+      - "rebase"
+      - "clean"
+      - "restore"
+      - "revert"
+      - "rm"
+
+hitl:
+  interactive: true
+  default_action: "reject"   # "reject" | "approve" — used when non-interactive and no bypass token
+
+observability:
+  audit_file: ".agent_audit/audit.jsonl"
+  log_level: "INFO"
+  log_format: "json"          # "json" | "text"
+
+workspace:
+  root: "C:/Users/sstha/Desktop/ai_/projects/helius-code"                  # null = Path.cwd(); set to an absolute path to override
+
+prompts:
+  system_prompt_file: ".helius/prompts/system_prompt.md"

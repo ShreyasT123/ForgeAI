@@ -1,0 +1,65 @@
+{
+	"name": "helius-cli",
+	"version": "0.0.0",
+	"license": "MIT",
+	"bin": "dist/cli.js",
+	"type": "module",
+	"engines": {
+		"node": ">=18"
+	},
+	"scripts": {
+		"build": "tsc",
+		"dev": "tsc --watch",
+		"test": "prettier --check . && xo && ava"
+	},
+	"files": [
+		"dist"
+	],
+	"dependencies": {
+		"@langchain/core": "^1.1.38",
+		"@langchain/google-genai": "^2.1.26",
+		"@langchain/groq": "^1.1.5",
+		"@langchain/langgraph": "^1.2.6",
+		"@langchain/langgraph-checkpoint": "^1.0.1",
+		"@langchain/tavily": "^1.2.0",
+		"deepagents": "^1.8.8",
+		"dotenv": "^17.3.1",
+		"ink": "^6.8.0",
+		"ink-text-input": "^5.0.1",
+		"langchain": "^1.2.39",
+		"react": "^19.2.4",
+		"yaml": "^2.4.1",
+		"zod": "^4.3.6"
+	},
+	"devDependencies": {
+		"@sindresorhus/tsconfig": "^3.0.1",
+		"@types/node": "^20.14.10",
+		"@vdemedes/prettier-config": "^2.0.1",
+		"ava": "^5.2.0",
+		"chalk": "^5.2.0",
+		"eslint-config-xo-react": "^0.27.0",
+		"eslint-plugin-react": "^7.32.2",
+		"eslint-plugin-react-hooks": "^4.6.0",
+		"prettier": "^2.8.7",
+		"ts-node": "^10.9.1",
+		"typescript": "^5.0.3",
+		"xo": "^0.53.1"
+	},
+	"ava": {
+		"extensions": {
+			"ts": "module",
+			"tsx": "module"
+		},
+		"nodeArguments": [
+			"--loader=ts-node/esm"
+		]
+	},
+	"xo": {
+		"extends": "xo-react",
+		"prettier": true,
+		"rules": {
+			"react/prop-types": "off"
+		}
+	},
+	"prettier": "@vdemedes/prettier-config"
+}
