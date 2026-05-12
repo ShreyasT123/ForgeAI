@@ -1,12 +1,12 @@
 {
-	"name": "helius-cli",
+	"name": "@itsshrey/helius-cli",
 	"version": "2.1.0",
 	"description": "Industrial-grade autonomous code agent with meta-recursive delegation.",
 	"author": "Helius Team",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/helius-ai/helius-cli.git"
+		"url": "git+https://github.com/ShreyasT123/ForgeAI.git"
 	},
 	"bin": {
 		"helius": "dist/cli.js"
