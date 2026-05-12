@@ -1,11 +1,17 @@
 {
-	"extends": "@sindresorhus/tsconfig",
-	"compilerOptions": {
-		"outDir": "dist",
-		"noPropertyAccessFromIndexSignature": false,
-		"noUncheckedIndexedAccess": false,
-		"noImplicitAny": false,
-		"skipLibCheck": true
-	},
-	"include": ["source"]
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022", "DOM"],
+    "jsx": "react",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "dist",
+    "rootDir": "source"
+  },
+  "include": ["source/**/*"],
+  "exclude": ["node_modules", "dist"]
 }

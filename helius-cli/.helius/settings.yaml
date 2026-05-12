@@ -3,7 +3,6 @@ agent:
   max_retries: 3
   retry_delay_seconds: 2.0
   thread_id_prefix: "session"
-  
 tools:
   filesystem:
     max_file_size_mb: 5

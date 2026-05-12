@@ -1,8 +1,16 @@
 {
 	"name": "helius-cli",
-	"version": "0.0.0",
+	"version": "1.0.0",
+	"description": "Industrial-grade autonomous code agent with meta-recursive delegation.",
+	"author": "Helius Team",
 	"license": "MIT",
-	"bin": "dist/cli.js",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/helius-ai/helius-cli.git"
+	},
+	"bin": {
+		"helius": "dist/cli.js"
+	},
 	"type": "module",
 	"engines": {
 		"node": ">=18"
@@ -10,7 +18,10 @@
 	"scripts": {
 		"build": "tsc",
 		"dev": "tsc --watch",
-		"test": "prettier --check . && xo && ava"
+		"test": "ava",
+		"test:lint": "xo",
+		"test:unit": "ava test/unit/*.test.ts",
+		"prepublishOnly": "npm run build && npm test"
 	},
 	"files": [
 		"dist"
@@ -32,10 +43,13 @@
 		"zod": "^4.3.6"
 	},
 	"devDependencies": {
+		"@ava/typescript": "^7.0.0",
 		"@sindresorhus/tsconfig": "^3.0.1",
 		"@types/node": "^20.14.10",
+		"@types/react": "^19.2.14",
+		"@types/react-dom": "^19.2.3",
 		"@vdemedes/prettier-config": "^2.0.1",
-		"ava": "^5.2.0",
+		"ava": "^6.4.1",
 		"chalk": "^5.2.0",
 		"eslint-config-xo-react": "^0.27.0",
 		"eslint-plugin-react": "^7.32.2",
@@ -46,9 +60,11 @@
 		"xo": "^0.53.1"
 	},
 	"ava": {
-		"extensions": {
-			"ts": "module",
-			"tsx": "module"
+		"typescript": {
+			"rewritePaths": {
+				"source/": "dist/"
+			},
+			"compile": false
 		},
 		"nodeArguments": [
 			"--loader=ts-node/esm"

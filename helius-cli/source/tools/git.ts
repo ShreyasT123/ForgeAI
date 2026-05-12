@@ -1,4 +1,6 @@
+import fs from "node:fs";
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { tool } from "langchain";
@@ -163,4 +165,41 @@ const gitDangerousOp = tool(
   }
 );
 
-export const GIT_TOOLS = [gitSafeOp, gitDangerousOp];
+const gitApplyPatchTool = tool(
+  async ({ patch }: { patch: string }) => {
+    logger.info("git_apply_patch started");
+    const ws = workspaceRoot();
+    const tmpPath = path.join(ws, `.helius_tmp_${randomUUID().slice(0, 8)}.patch`);
+    
+    try {
+      fs.writeFileSync(tmpPath, patch, "utf8");
+      const result = spawnSync("git", ["apply", "--whitespace=fix", tmpPath], {
+        cwd: ws,
+        encoding: "utf8",
+      });
+      
+      if (result.status !== 0) {
+        const err = (result.stderr || result.stdout || "Unknown error").trim();
+        return `Git apply failed:\n${err}`;
+      }
+      
+      return "Patch applied successfully via git apply.";
+    } catch (err) {
+      logger.error("git_apply_patch error", err);
+      return `Error: ${(err as Error).message}`;
+    } finally {
+      if (fs.existsSync(tmpPath)) {
+        fs.unlinkSync(tmpPath);
+      }
+    }
+  },
+  {
+    name: "git_apply_patch",
+    description: "Apply a unified diff patch using 'git apply'. More robust than manual patching.",
+    schema: z.object({
+      patch: z.string().describe("The unified diff patch to apply."),
+    }),
+  }
+);
+
+export const GIT_TOOLS = [gitSafeOp, gitDangerousOp, gitApplyPatchTool];

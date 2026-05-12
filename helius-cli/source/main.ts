@@ -13,6 +13,7 @@ type ParsedArgs = {
   systemPromptFile: string | null;
   model: string | null;
   threadId: string | null;
+  json: boolean;
 };
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -22,6 +23,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     systemPromptFile: null,
     model: null,
     threadId: null,
+    json: false,
   };
 
   const taskParts: string[] = [];
@@ -67,6 +69,10 @@ function parseArgs(argv: string[]): ParsedArgs {
       }
       continue;
     }
+    if (arg === "--json") {
+      out.json = true;
+      continue;
+    }
     if (arg.startsWith("-")) {
       continue;
     }
@@ -90,17 +96,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   const args = parseArgs(argv);
 
   const settings = getSettings();
-  configureLogging(
-    settings.observability.log_level,
-    settings.observability.log_format
-  );
+  if (!args.json) {
+    configureLogging(
+      settings.observability.log_level,
+      settings.observability.log_format
+    );
+  }
 
   if (args.model) {
     settings.agent.model = args.model;
   }
 
   if (!args.task) {
-    console.log("No task provided. Use --task \"...\" or pass the task as args.");
+    if (!args.json) console.log("No task provided. Use --task \"...\" or pass the task as args.");
     return 1;
   }
 
@@ -109,7 +117,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     try {
       systemPrompt = loadSystemPromptFromFile(args.systemPromptFile);
     } catch (err) {
-      console.log(`Error: ${(err as Error).message}`);
+      if (!args.json) console.log(`Error: ${(err as Error).message}`);
       return 1;
     }
   } else if (args.systemPrompt) {
@@ -121,7 +129,17 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   const { result } = await runAgent(args.task, {
     agent,
     threadId: args.threadId ?? null,
+    // Pass a silent presenter if JSON is requested to avoid TUI-like output in recursion
+    presenter: args.json ? { present: () => { throw new Error("HITL not supported in JSON/Recursive mode."); } } : undefined,
   });
+
+  if (args.json) {
+    console.log(JSON.stringify({
+      success: Boolean(result),
+      threadId: args.threadId,
+      result: result ? (result.messages as any[])?.at(-1)?.content : null
+    }));
+  }
 
   return result ? 0 : 1;
 }

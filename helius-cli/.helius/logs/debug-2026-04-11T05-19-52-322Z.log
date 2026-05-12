@@ -1,3 +1,0 @@
-{"ts":1775884792.32,"level":"INFO","logger":"tui","msg":"tui init"}
-{"ts":1775884792.326,"level":"INFO","logger":"agents.builder","msg":"Building agent | model='google_genai:gemini-2.5-pro' tools=9"}
-{"ts":1775884792.367,"level":"INFO","logger":"tui","msg":"tui agent ready"}

@@ -1,3 +1,0 @@
-{"ts":1777797250.349,"level":"INFO","logger":"agents.builder","msg":"Building agent | model='groq:llama-3.3-70b-versatile' tools=9"}
-{"ts":1777797250.405,"level":"INFO","logger":"agents.runner","msg":"runAgent start thread=session-1f52a444 resumed=false retries=3"}
-{"ts":1777797250.409,"level":"INFO","logger":"agents.runner","msg":"attempt 1/3 thread=session-1f52a444"}

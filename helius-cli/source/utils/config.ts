@@ -114,7 +114,7 @@ export interface Settings {
 
 // ── Defaults ────────────────────────────────────────────────────────────────
 
-const DEFAULT_SETTINGS: Settings = {
+export const DEFAULT_SETTINGS: Settings = {
   google_api_key: null,
   openai_api_key: null,
   groq_api_key: null,

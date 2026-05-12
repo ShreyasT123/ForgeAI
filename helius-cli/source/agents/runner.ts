@@ -7,6 +7,11 @@ import { logAudit } from "../utils/audit.js";
 
 
 const logger = getLogger("agents.runner");
+const isSilent = process.env.HELIUS_SILENT === "true";
+
+function log(msg: string) {
+  if (!isSilent) console.log(msg);
+}
 
 function newThreadId(prefix: string): string {
   return `${prefix}-${randomUUID().slice(0, 8)}`;
@@ -19,11 +24,26 @@ function buildRunConfig(threadId: string): Record<string, unknown> {
 }
 
 function printLastMessage(result: Record<string, unknown>): void {
+  if (isSilent) return;
   const messages = result.messages as Array<any> | undefined;
   if (!messages || messages.length === 0) return;
   const last = messages[messages.length - 1];
-  const content = last?.content ?? last?.content?.text ?? last?.content;
-  if (content !== undefined && content !== null) {
+  
+  let content = last?.content;
+  if (Array.isArray(content)) {
+    content = content
+      .map((block: any) => {
+        if (typeof block === "string") return block;
+        if (block?.text) return block.text;
+        if (block?.type === "text") return block.text;
+        return "";
+      })
+      .join("");
+  } else if (content && typeof content === "object") {
+    content = content.text ?? JSON.stringify(content);
+  }
+
+  if (content !== undefined && content !== null && String(content).trim().length > 0) {
     console.log(String(content));
   }
 }
@@ -49,17 +69,17 @@ export async function runAgent(
   );
 
   if (isResumed) {
-    console.log(`\nResuming session | Thread: ${tid}\n`);
+    log(`\nResuming session | Thread: ${tid}\n`);
     logAudit(tid, "agent_resume", { userInput });
   } else {
-    console.log(`\nAgent started | Thread: ${tid}\n`);
+    log(`\nAgent started | Thread: ${tid}\n`);
     logAudit(tid, "agent_start", { userInput });
   }
 
   for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
     try {
       logger.info(`attempt ${attempt}/${maxRetries} thread=${tid}`);
-      console.log(`Attempt ${attempt}/${maxRetries}`);
+      log(`Attempt ${attempt}/${maxRetries}`);
       let result = await opts.agent.invoke(
         { messages: [{ role: "user", content: userInput }] },
         config
@@ -69,37 +89,37 @@ export async function runAgent(
       while (true) {
         const state = await opts.agent.getState(config);
         if (!state?.next || state.next.length === 0) break;
-        console.log("\nHuman authorization required...");
+        log("\nHuman authorization required...");
         logger.info(`HITL interrupt thread=${tid}`);
 
         result = await handleHitlInterrupt(opts.agent, config, opts.presenter);
         if (!result) {
-          console.log("Execution stopped (HITL handler returned nothing).");
+          log("Execution stopped (HITL handler returned nothing).");
           logger.warn(`HITL returned null thread=${tid}`);
           return { result: null, threadId: tid };
         }
       }
 
-      console.log(`\nTask complete. (session: ${tid})\n`);
+      log(`\nTask complete. (session: ${tid})\n`);
       logger.info(`runAgent success thread=${tid}`);
       logAudit(tid, "agent_success", { result });
       printLastMessage(result as Record<string, unknown>);
       return { result: result as Record<string, unknown>, threadId: tid };
     } catch (err) {
       if ((err as Error)?.name === "AbortError") {
-        console.log("\nInterrupted by user.");
+        log("\nInterrupted by user.");
         logger.warn(`runAgent aborted thread=${tid}`);
         return { result: null, threadId: tid };
       }
 
-      console.log(`\nError on attempt ${attempt}/${maxRetries}`);
+      log(`\nError on attempt ${attempt}/${maxRetries}`);
       logger.error(`runAgent error attempt=${attempt} thread=${tid}`, err);
       logAudit(tid, "agent_error", { attempt, error: (err as Error).message });
       if (attempt < maxRetries) {
-        console.log(`\nRetrying in ${retryDelay}s...`);
+        log(`\nRetrying in ${retryDelay}s...`);
         await new Promise((r) => setTimeout(r, retryDelay * 1000));
       } else {
-        console.log("\nAll retries exhausted.");
+        log("\nAll retries exhausted.");
         return { result: null, threadId: tid };
       }
     }

@@ -16,15 +16,15 @@ import { getLogger } from "./utils/logger.js";
 //   SUSHI  mascot: swap MASCOT_LINES to the fish variant below + "#f97316"
 //
 const AGENT_NAME = "HELIUS";
-const AGENT_SUB  = "autonomous code agent";
+const AGENT_SUB  = "industrial autonomous engineer";
 
-//  ── Sun mascot (HELIUS) ──────────────────────────────────────────────────
+//  ── Industrial mascot ──────────────────────────────────────────────────
 const MASCOT_LINES = [
-  { text: "  .:. .:. .:.   ", dim: true },
-  { text: "   >  0 0  <     " },
-  { text: "     \\ ^ /       " },
-  { text: "   <  ---  >     " },
-  { text: "  .:. .:. .:.   ", dim: true },
+  { text: "      _______      ", dim: true },
+  { text: "     /       \\     " },
+  { text: "    |  [☉]   |     " },
+  { text: "     \\_______/     " },
+  { text: "    /|_______|\\    ", dim: true },
 ];
 //  ── Fish mascot (SUSHI) — swap MASCOT_LINES above ─────────────────────
 //  { text: "    ><(((º>        " },
@@ -150,13 +150,18 @@ function MascotPanel({ loading }: { loading: boolean }) {
           </Text>
           <Text color={C.dim}>
             {"  "}
-            <Text color={C.muted}>/clear</Text>
-            {"  reset transcript"}
+            <Text color={C.muted}>task architect</Text>
+            {" delegate planning"}
           </Text>
           <Text color={C.dim}>
             {"  "}
-            <Text color={C.muted}>ctrl+c</Text>
-            {" quit"}
+            <Text color={C.muted}>task reviewer</Text>
+            {" delegate auditing"}
+          </Text>
+          <Text color={C.dim}>
+            {"  "}
+            <Text color={C.muted}>/clear</Text>
+            {"  reset transcript"}
           </Text>
         </Box>
 
