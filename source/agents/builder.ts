@@ -1,37 +1,37 @@
-import { createDeepAgent, FilesystemBackend } from "deepagents";
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
-import { ChatGroq } from "@langchain/groq";
-import { MemorySaver } from "@langchain/langgraph";
+import {createDeepAgent, FilesystemBackend} from 'deepagents';
+import {ChatGoogleGenerativeAI} from '@langchain/google-genai';
+import {ChatGroq} from '@langchain/groq';
+import {MemorySaver} from '@langchain/langgraph';
 
-import { getSettings, loadSystemPrompt } from "../utils/config.js";
-import { getLogger } from "../utils/logger.js";
-import { discoverProject, formatProjectSummary } from "../utils/discovery.js";
+import {getSettings, loadSystemPrompt} from '../utils/config.js';
+import {getLogger} from '../utils/logger.js';
+import {discoverProject, formatProjectSummary} from '../utils/discovery.js';
 
 type AnyTool = unknown;
 
-const logger = getLogger("agents.builder");
+const logger = getLogger('agents.builder');
 
 export async function buildAgent(
-  tools: AnyTool[],
-  opts: {
-    checkpointer?: any;
-    systemPrompt?: string;
-  } = {}
+	tools: AnyTool[],
+	opts: {
+		checkpointer?: any;
+		systemPrompt?: string;
+	} = {},
 ) {
-  const settings = getSettings();
-  const basePrompt = opts.systemPrompt ?? loadSystemPrompt(settings);
-  const saver = opts.checkpointer ?? new MemorySaver();
-  const rootDir = settings.workspace.root ?? process.cwd();
+	const settings = getSettings();
+	const basePrompt = opts.systemPrompt ?? loadSystemPrompt(settings);
+	const saver = opts.checkpointer ?? new MemorySaver();
+	const rootDir = settings.workspace.root ?? process.cwd();
 
-  logger.info(
-    `Building agent | model='${settings.agent.model}' tools=${tools.length}`
-  );
+	logger.info(
+		`Building agent | model='${settings.agent.model}' tools=${tools.length}`,
+	);
 
-  // Phase 1: Project Discovery
-  const discovery = await discoverProject();
-  const projectSummary = formatProjectSummary(discovery);
-  
-  const systemPrompt = `
+	// Phase 1: Project Discovery
+	const discovery = await discoverProject();
+	const projectSummary = formatProjectSummary(discovery);
+
+	const systemPrompt = `
 ${basePrompt}
 
 # Project Context
@@ -54,44 +54,44 @@ ${projectSummary}
 - If you encounter an obstacle, explain it clearly and propose a workaround rather than just failing.
 `.trim();
 
-  const agent = await createDeepAgent({
-    backend: new FilesystemBackend({
-      rootDir,
-      virtualMode: true,
-    }),
-    model: (() => {
-      const modelStr = settings.agent.model;
-      if (modelStr.startsWith("groq:")) {
-        return new ChatGroq({
-          model: modelStr.replace("groq:", ""),
-          apiKey: settings.groq_api_key ?? undefined,
-        });
-      }
-      // Default to Google GenAI
-      const modelName = modelStr.includes(":") ? modelStr.split(":")[1] : modelStr;
-      return new ChatGoogleGenerativeAI({
-        model: modelName,
-        apiKey: settings.google_api_key ?? undefined,
-      });
-    })(),
-    tools: tools as any,
-    systemPrompt,
-    checkpointer: saver,
-    // Skill source paths are relative to the backend root in the JS docs.
-    skills: ["./.helius/skills"],
-    subagents: [
-      {
-        name: "architect",
-        description: "Specializes in high-level design, mapping dependencies, and planning complex changes.",
-        systemPrompt: "You are a software architect. Your goal is to map out changes and ensure architectural consistency. Use search_symbols and ls to understand the project structure before proposing a plan.",
-      },
-      {
-        name: "reviewer",
-        description: "Specializes in auditing changes, running tests, and ensuring code quality.",
-        systemPrompt: "You are a meticulous code reviewer. Your goal is to verify that changes are correct, follow style guides, and don't introduce regressions. Use the verify tool extensively.",
-      }
-    ]
-  });
+	const agent = await createDeepAgent({
+		backend: new FilesystemBackend({
+			rootDir,
+			virtualMode: true,
+		}),
+		model: (() => {
+			const modelStr = settings.agent.model;
+			if (modelStr.startsWith('groq:')) {
+				return new ChatGroq({
+					model: modelStr.replace('groq:', ''),
+					apiKey: settings.groq_api_key ?? undefined,
+				});
+			}
+			// Default to Google GenAI
+			const modelName = modelStr.includes(':') ? modelStr.split(':')[1] : modelStr;
+			return new ChatGoogleGenerativeAI({
+				model: modelName,
+				apiKey: settings.google_api_key ?? undefined,
+			});
+		})(),
+		tools: tools as any,
+		systemPrompt,
+		checkpointer: saver,
+		// Skill source paths are relative to the backend root in the JS docs.
+		skills: ['./.helius/skills'],
+		subagents: [
+			{
+				name: 'architect',
+				description: 'Specializes in high-level design, mapping dependencies, and planning complex changes.',
+				systemPrompt: 'You are a software architect. Your goal is to map out changes and ensure architectural consistency. Use search_symbols and ls to understand the project structure before proposing a plan.',
+			},
+			{
+				name: 'reviewer',
+				description: 'Specializes in auditing changes, running tests, and ensuring code quality.',
+				systemPrompt: 'You are a meticulous code reviewer. Your goal is to verify that changes are correct, follow style guides, and don\'t introduce regressions. Use the verify tool extensively.',
+			},
+		],
+	});
 
-  return agent;
+	return agent;
 }

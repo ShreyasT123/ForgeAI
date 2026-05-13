@@ -1,13 +1,13 @@
-import test from "ava";
-import { discoverProject } from "../../source/utils/discovery.js";
-import path from "node:path";
-import fs from "node:fs";
+import path from 'node:path';
+import fs from 'node:fs';
+import test from 'ava';
+import {discoverProject} from '../../source/utils/discovery.js';
 
-import { getSettings } from "../../source/utils/config.js";
+import {getSettings} from '../../source/utils/config.js';
 
-test("discoverProject finds package info", async (t) => {
-  const summary = await discoverProject();
-  t.is(summary.name, "@itsshrey/sushi-cli");
-  t.truthy(summary.mainTech.includes("typescript"));
-  t.truthy(summary.structure.includes("source"));
+test('discoverProject finds package info', async t => {
+	const summary = await discoverProject();
+	t.is(summary.name, '@itsshrey/sushi-cli');
+	t.truthy(summary.mainTech.includes('typescript'));
+	t.truthy(summary.structure.includes('source'));
 });

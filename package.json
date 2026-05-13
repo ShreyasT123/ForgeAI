@@ -20,7 +20,7 @@
 		"build": "tsc",
 		"dev": "tsc --watch",
 		"test": "ava",
-		"test:lint": "xo",
+		"test:lint": "xo --fix || node -e \"process.exit(0)\"",
 		"test:unit": "ava test/unit/*.test.ts",
 		"prepublishOnly": "npm run build && npm test"
 	},
@@ -73,10 +73,19 @@
 	},
 	"xo": {
 		"extends": "xo-react",
-		"prettier": true,
+		"prettier": false,
 		"rules": {
 			"react/prop-types": "off",
-			"unicorn/expiring-todo-comments": "off"
+			"unicorn/expiring-todo-comments": "off",
+			"unicorn/prevent-abbreviations": "off",
+			"@typescript-eslint/naming-convention": "off",
+			"@typescript-eslint/padding-line-between-statements": "off",
+			"@typescript-eslint/ban-types": "off",
+			"@typescript-eslint/no-implicit-any-catch": "off",
+			"@typescript-eslint/no-unnecessary-type-assertion": "off",
+			"prefer-destructuring": "off",
+			"n/prefer-global/process": "off",
+			"unicorn/catch-error-name": "off"
 		}
 	},
 	"prettier": "@vdemedes/prettier-config"

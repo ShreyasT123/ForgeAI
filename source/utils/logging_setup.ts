@@ -1,3 +1,2 @@
-import { configureLogging, getLogger } from "./logger.js";
 
-export { configureLogging, getLogger };
+export {getLogger, configureLogging} from './logger.js';

@@ -1,1 +1,1 @@
-declare module "ink-text-input";
+declare module 'ink-text-input';
