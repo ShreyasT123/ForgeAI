@@ -1,4 +1,4 @@
-image: node:20
+image: node:22
 
 stages:
   - test
@@ -11,6 +11,7 @@ cache:
 
 before_script:
   - npm ci --cache .npm --prefer-offline --legacy-peer-deps
+  - npm run build
 
 test_lint:
   stage: test
