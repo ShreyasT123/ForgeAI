@@ -1,16 +1,17 @@
 {
-	"name": "@itsshrey/helius-cli",
-	"version": "1.0.0",
+	"name": "sushi-cli",
+	"version": "2.1.0",
 	"description": "Industrial-grade autonomous code agent with meta-recursive delegation.",
 	"author": "Helius Team",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/ShreyasT123/ForgeAI.git"
+		"url": "git+https://github.com/ShreyasT123/sushi-cli.git"
 	},
 	"bin": {
-		"helius": "dist/cli.js"
+		"sushi": "dist/cli.js"
 	},
+
 	"type": "module",
 	"engines": {
 		"node": ">=18"

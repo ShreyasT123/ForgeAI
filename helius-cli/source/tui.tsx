@@ -15,16 +15,16 @@ import { getLogger } from "./utils/logger.js";
 //   BLU    mascot: swap MASCOT_LINES + C.primary to "#38bdf8" (sky-blue)
 //   SUSHI  mascot: swap MASCOT_LINES to the fish variant below + "#f97316"
 //
-const AGENT_NAME = "HELIUS";
+const AGENT_NAME = "SUSHI";
 const AGENT_SUB  = "industrial autonomous engineer";
 
-//  ── Industrial mascot ──────────────────────────────────────────────────
+//  ── Fish mascot (SUSHI) ────────────────────────────────────────────────
 const MASCOT_LINES = [
-  { text: "      _______      ", dim: true },
-  { text: "     /       \\     " },
-  { text: "    |  [☉]   |     " },
-  { text: "     \\_______/     " },
-  { text: "    /|_______|\\    ", dim: true },
+  { text: "    ><(((º>        ", dim: true },
+  { text: "  ~~ ~~~~ ~~~      " },
+  { text: " ><(( º> ><(º>    " },   // hero line
+  { text: "  ~~ ~~~~ ~~~      " },
+  { text: "    ><(((º>        ", dim: true },
 ];
 //  ── Fish mascot (SUSHI) — swap MASCOT_LINES above ─────────────────────
 //  { text: "    ><(((º>        " },
