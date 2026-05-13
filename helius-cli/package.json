@@ -1,6 +1,6 @@
 {
 	"name": "@itsshrey/helius-cli",
-	"version": "2.1.0",
+	"version": "1.0.0",
 	"description": "Industrial-grade autonomous code agent with meta-recursive delegation.",
 	"author": "Helius Team",
 	"license": "MIT",

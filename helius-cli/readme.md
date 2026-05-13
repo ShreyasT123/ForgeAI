@@ -13,7 +13,7 @@ HELIUS is a production-grade autonomous agent built for high-stakes software eng
 ## 📦 Installation
 
 ```bash
-npm install -g helius-cli
+npm install -g @itsshrey/helius-cli
 ```
 
 ## 🛠 Usage
