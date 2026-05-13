@@ -18,9 +18,9 @@ export async function discoverProject(): Promise<ProjectSummary> {
 		settings.workspace.root,
 		process.cwd(),
 		path.dirname(fileURLToPath(import.meta.url)),
-	].filter(Boolean);
+	].filter((root): root is string => typeof root === 'string' && root.length > 0);
 
-	let rootDir = searchRoots[0];
+	let rootDir = searchRoots[0] ?? process.cwd();
 	let pkgPath = '';
 
 	for (const root of searchRoots) {
