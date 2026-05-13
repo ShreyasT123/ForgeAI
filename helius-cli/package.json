@@ -1,12 +1,12 @@
 {
-	"name": "sushi-cli",
-	"version": "2.1.0",
+	"name": "@itsshrey/sushi-cli",
+	"version": "1.0.1",
 	"description": "Industrial-grade autonomous code agent with meta-recursive delegation.",
-	"author": "Helius Team",
+	"author": "Sushi Team",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/ShreyasT123/sushi-cli.git"
+		"url": "git+ https://gitlab.com/shreyasthale54/sushi.git"
 	},
 	"bin": {
 		"sushi": "dist/cli.js"

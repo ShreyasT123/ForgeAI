@@ -1,5 +1,40 @@
-node_modules
-dist
-*.helius/
-*logs/
+# Dependencies
+node_modules/
+jspm_packages/
+
+# Build
+dist/
+build/
+
+# Logs
+logs/
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Project specific
+.helius/logs/
+.helius/sessions/
+.helius/agent_audit/
+.helius_tmp_*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Tests
+.nyc_output
+coverage/
+.ava_output

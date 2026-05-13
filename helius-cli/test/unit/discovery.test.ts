@@ -7,7 +7,7 @@ import { getSettings } from "../../source/utils/config.js";
 
 test("discoverProject finds package info", async (t) => {
   const summary = await discoverProject();
-  t.is(summary.name, "sushi-cli");
+  t.is(summary.name, "@itsshrey/sushi-cli");
   t.truthy(summary.mainTech.includes("typescript"));
   t.truthy(summary.structure.includes("source"));
 });
