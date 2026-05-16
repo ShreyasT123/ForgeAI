@@ -3,6 +3,7 @@ import readline from 'node:readline/promises';
 import {stdin as input, stdout as output} from 'node:process';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import fs from 'node:fs';
 import {render} from 'ink';
 import React from 'react';
 
@@ -263,7 +264,17 @@ export async function runCli(
 
 const entry = process.argv[1] ? path.resolve(process.argv[1]) : null;
 const self = fileURLToPath(import.meta.url);
-if (entry && self === entry) {
+
+let isMain = false;
+try {
+	if (entry && fs.realpathSync(entry) === fs.realpathSync(self)) {
+		isMain = true;
+	}
+} catch {
+	isMain = entry === self;
+}
+
+if (isMain) {
 	runCli().then(code => {
 		if (typeof code === 'number') {
 			process.exit(code);
