@@ -4,7 +4,6 @@ import {randomUUID} from 'node:crypto';
 import path from 'node:path';
 
 import {tool} from 'langchain';
-import {interrupt} from '@langchain/langgraph';
 import {z} from 'zod';
 
 import {getSettings} from '../utils/config.js';
@@ -141,27 +140,6 @@ const runCommandTool = tool(
 				`Security Error: '${executable}' is not in the allowlist. `
         + 'Add it to .helius/settings.yaml -> tools.shell.allowlist if it\'s safe.'
 			);
-		}
-
-		if (cfg.dangerous.has(executable)) {
-			const response = interrupt({
-				action: 'approve_command',
-				command,
-				reason: `'${executable}' is a potentially destructive operation.`,
-			}) as Record<string, unknown>;
-			if (!response?.approved) {
-				logger.warn(`run_command denied executable=${executable}`);
-				return `Denied. '${executable}' was not executed.`;
-			}
-			const edited = response?.edited_command as string | undefined;
-			if (edited) {
-				command = edited;
-				try {
-					args = splitArgs(command);
-				} catch (err) {
-					return `Argument parsing error in edited command: ${(err as Error).message}`;
-				}
-			}
 		}
 
 		if (!executableExists(args[0])) {

@@ -65,6 +65,8 @@ export async function runAgent(
 		agent: any;
 		presenter?: HITLPresenter;
 		threadId?: string | null;
+		checkpointId?: string | null;
+		onStream?: (chunk: any) => void;
 	},
 ): Promise<{result: Record<string, unknown> | null; threadId: string}> {
 	const settings = getSettings();
@@ -74,12 +76,25 @@ export async function runAgent(
 	const tid = opts.threadId ?? newThreadId(settings.agent.thread_id_prefix);
 	const isResumed = Boolean(opts.threadId);
 	const config = buildRunConfig(tid);
+	let invokeInput: any = {messages: [{role: 'user', content: userInput}]};
+
+	if (opts.checkpointId) {
+		config.configurable = {...config.configurable as any, checkpoint_id: opts.checkpointId};
+		if (userInput) {
+			const forkConfig = await opts.agent.updateState(config, {messages: [{role: 'user', content: userInput}]});
+			Object.assign(config, forkConfig);
+			invokeInput = null; // Resume from the new fork
+		}
+	}
 
 	logger.info(
-		`runAgent start thread=${tid} resumed=${isResumed} retries=${maxRetries}`,
+		`runAgent start thread=${tid} resumed=${isResumed} checkpoint=${opts.checkpointId ?? 'latest'} retries=${maxRetries}`,
 	);
 
-	if (isResumed) {
+	if (opts.checkpointId) {
+		log(`\nForking session from checkpoint | Thread: ${tid}\n`);
+		logAudit(tid, 'agent_fork', {userInput, checkpointId: opts.checkpointId});
+	} else if (isResumed) {
 		log(`\nResuming session | Thread: ${tid}\n`);
 		logAudit(tid, 'agent_resume', {userInput});
 	} else {
@@ -91,10 +106,22 @@ export async function runAgent(
 		try {
 			logger.info(`attempt ${attempt}/${maxRetries} thread=${tid}`);
 			log(`Attempt ${attempt}/${maxRetries}`);
-			let result = await opts.agent.invoke(
-				{messages: [{role: 'user', content: userInput}]},
-				config,
-			);
+			let result: any;
+			if (opts.onStream) {
+				const streamConfig = {...config, streamMode: 'values'};
+				for await (const chunk of await opts.agent.stream(
+					invokeInput,
+					streamConfig,
+				)) {
+					opts.onStream(chunk);
+					result = chunk;
+				}
+			} else {
+				result = await opts.agent.invoke(
+					invokeInput,
+					config,
+				);
+			}
 			logger.info(`invoke done thread=${tid}`);
 
 			while (true) {
@@ -105,11 +132,21 @@ export async function runAgent(
 				log('\nHuman authorization required...');
 				logger.info(`HITL interrupt thread=${tid}`);
 
-				result = await handleHitlInterrupt(opts.agent, config, opts.presenter);
-				if (!result) {
+				const cmd = await handleHitlInterrupt(opts.agent, config, opts.presenter);
+				if (!cmd) {
 					log('Execution stopped (HITL handler returned nothing).');
 					logger.warn(`HITL returned null thread=${tid}`);
 					return {result: null, threadId: tid};
+				}
+
+				if (opts.onStream) {
+					const streamConfig = {...config, streamMode: 'values'};
+					for await (const chunk of await opts.agent.stream(cmd, streamConfig)) {
+						opts.onStream(chunk);
+						result = chunk;
+					}
+				} else {
+					result = await opts.agent.invoke(cmd, config);
 				}
 			}
 

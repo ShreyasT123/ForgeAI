@@ -192,6 +192,8 @@ export default function App({resume}: {readonly resume: string | null}) {
 	const [inputValue, setInputValue] = useState('');
 	const [busy, setBusy] = useState(false);
 	const [messages, setMessages] = useState<Message[]>([]);
+	const [todos, setTodos] = useState<any[]>([]);
+	const [activeSubagent, setActiveSubagent] = useState<string | null>(null);
 
 	const spin = useSpinner(busy);
 
@@ -237,8 +239,32 @@ export default function App({resume}: {readonly resume: string | null}) {
 		push('user', task);
 
 		try {
-			const {result, threadId: usedTid} = await runAgent(task, {agent, threadId});
+			const {result, threadId: usedTid} = await runAgent(task, {
+				agent,
+				threadId,
+				onStream(chunk: any) {
+					if (chunk.todos) {
+						setTodos(chunk.todos);
+					}
+					if (chunk.messages) {
+						const lastMsg = chunk.messages[chunk.messages.length - 1];
+						if (lastMsg?.tool_calls?.length > 0) {
+							const t = lastMsg.tool_calls.find((tc: any) => tc.name === 'delegate_task');
+							if (t) {
+								setActiveSubagent(t.args?.agent ?? 'subagent');
+							}
+						} else if (lastMsg?.role === 'tool' && lastMsg?.name === 'delegate_task') {
+							// Finished subagent task
+							setActiveSubagent(null);
+						}
+					}
+					if (chunk.__interrupt__) {
+						setActiveSubagent(null);
+					}
+				},
+			});
 			setThreadId(usedTid);
+			setActiveSubagent(null);
 			push(result ? 'agent' : 'error', result ? 'Task completed.' : 'Task failed.');
 			logger.info(`tui runAgent result=${Boolean(result)} thread=${usedTid}`);
 		} catch (err: any) {
@@ -291,11 +317,23 @@ export default function App({resume}: {readonly resume: string | null}) {
 				)}
 
 				{busy && (
-					<Box marginTop={1} gap={1}>
-						<Text color={C.accent}>{spin}</Text>
-						<Text color={C.dim}>
-							thinking{'  '}·{'  '}running tools{'  '}·{'  '}updating state
-						</Text>
+					<Box marginTop={1} flexDirection='column'>
+						<Box gap={1}>
+							<Text color={C.accent}>{spin}</Text>
+							<Text color={C.dim}>
+								{activeSubagent ? `${activeSubagent} is working` : 'thinking'}{'  '}·{'  '}running tools{'  '}·{'  '}updating state
+							</Text>
+						</Box>
+						{todos.length > 0 && (
+							<Box flexDirection='column' paddingLeft={2} marginTop={1}>
+								<Text color={C.muted}>Plan:</Text>
+								{todos.map((t: any, i: number) => (
+									<Text key={i} color={t.status === 'completed' ? C.green : (t.status === 'in_progress' ? C.accent : C.dim)}>
+										{t.status === 'completed' ? '✓' : (t.status === 'in_progress' ? '►' : '○')} {t.content}
+									</Text>
+								))}
+							</Box>
+						)}
 					</Box>
 				)}
 			</Box>

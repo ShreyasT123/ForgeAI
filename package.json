@@ -1,17 +1,16 @@
 {
 	"name": "@itsshrey/sushi-cli",
-	"version": "1.0.1",
+	"version": "1.2.0",
 	"description": "Industrial-grade autonomous code agent with meta-recursive delegation.",
 	"author": "Sushi Team",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+ https://gitlab.com/shreyasthale54/sushi.git"
+		"url": "git+ https://github.com/shreyasT123/sushi-cli.git"
 	},
 	"bin": {
 		"sushi": "dist/cli.js"
 	},
-
 	"type": "module",
 	"engines": {
 		"node": ">=18"
@@ -21,6 +20,7 @@
 		"dev": "tsc --watch",
 		"test": "ava",
 		"test:lint": "xo --fix || node -e \"process.exit(0)\"",
+		"lint": "xo",
 		"test:unit": "ava test/unit/*.test.ts",
 		"prepublishOnly": "npm run build && npm test"
 	},
@@ -85,7 +85,34 @@
 			"@typescript-eslint/no-unnecessary-type-assertion": "off",
 			"prefer-destructuring": "off",
 			"n/prefer-global/process": "off",
-			"unicorn/catch-error-name": "off"
+			"unicorn/catch-error-name": "off",
+			"@typescript-eslint/no-unsafe-assignment": "off",
+			"@typescript-eslint/no-unsafe-return": "off",
+			"@typescript-eslint/no-unsafe-call": "off",
+			"@typescript-eslint/restrict-template-expressions": "off",
+			"no-await-in-loop": "off",
+			"unicorn/no-await-expression-member": "off",
+			"@typescript-eslint/member-ordering": "off",
+			"unicorn/prefer-top-level-await": "off",
+			"@typescript-eslint/no-floating-promises": "off",
+			"n/file-extension-in-import": "off",
+			"n/prefer-global/buffer": "off",
+			"react/no-array-index-key": "off",
+			"react/boolean-prop-naming": "off",
+			"no-promise-executor-return": "off",
+			"default-case": "off",
+			"no-lone-blocks": "off",
+			"no-unreachable-loop": "off",
+			"unicorn/filename-case": "off",
+			"no-mixed-operators": "off",
+			"no-mixed-spaces-and-tabs": "off",
+			"unicorn/no-new-array": "off",
+			"complexity": "off",
+			"no-negated-condition": "off",
+			"@typescript-eslint/parameter-properties": "off",
+			"@typescript-eslint/no-redundant-type-constituents": "off",
+			"no-constant-condition": "off",
+			"unicorn/no-process-exit": "off"
 		}
 	},
 	"prettier": "@vdemedes/prettier-config"

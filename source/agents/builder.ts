@@ -1,7 +1,12 @@
-import {createDeepAgent, FilesystemBackend} from 'deepagents';
+import {createDeepAgent, FilesystemBackend, CompositeBackend, StoreBackend, StateBackend} from 'deepagents';
 import {ChatGoogleGenerativeAI} from '@langchain/google-genai';
 import {ChatGroq} from '@langchain/groq';
-import {MemorySaver} from '@langchain/langgraph';
+import {MemorySaver, InMemoryStore} from '@langchain/langgraph';
+
+import {FS_TOOLS} from '../tools/fs.js';
+import {GIT_TOOLS} from '../tools/git.js';
+import {INTELLIGENCE_TOOLS} from '../tools/intelligence.js';
+import {VERIFICATION_TOOLS} from '../tools/verification.js';
 
 import {getSettings, loadSystemPrompt} from '../utils/config.js';
 import {getLogger} from '../utils/logger.js';
@@ -21,6 +26,7 @@ export async function buildAgent(
 	const settings = getSettings();
 	const basePrompt = opts.systemPrompt ?? loadSystemPrompt(settings);
 	const saver = opts.checkpointer ?? new MemorySaver();
+	const store = new InMemoryStore();
 	const rootDir = settings.workspace.root ?? process.cwd();
 
 	logger.info(
@@ -55,10 +61,17 @@ ${projectSummary}
 `.trim();
 
 	const agent = await createDeepAgent({
-		backend: new FilesystemBackend({
-			rootDir,
-			virtualMode: true,
-		}),
+		backend: (config: any) => new CompositeBackend(
+			new FilesystemBackend({
+				rootDir,
+				virtualMode: true,
+			}),
+			{
+				'/memories/': new StoreBackend(config),
+				'/tmp/': new StateBackend(config),
+			},
+		),
+		store,
 		model: (() => {
 			const modelStr = settings.agent.model;
 			if (modelStr.startsWith('groq:')) {
@@ -84,13 +97,20 @@ ${projectSummary}
 				name: 'architect',
 				description: 'Specializes in high-level design, mapping dependencies, and planning complex changes.',
 				systemPrompt: 'You are a software architect. Your goal is to map out changes and ensure architectural consistency. Use search_symbols and ls to understand the project structure before proposing a plan.',
+				skills: ['./.helius/skills'],
+				tools: [...INTELLIGENCE_TOOLS, ...FS_TOOLS, ...GIT_TOOLS],
 			},
 			{
 				name: 'reviewer',
 				description: 'Specializes in auditing changes, running tests, and ensuring code quality.',
 				systemPrompt: 'You are a meticulous code reviewer. Your goal is to verify that changes are correct, follow style guides, and don\'t introduce regressions. Use the verify tool extensively.',
+				skills: ['./.helius/skills'],
+				tools: [...VERIFICATION_TOOLS, ...FS_TOOLS, ...GIT_TOOLS],
 			},
 		],
+		interruptOn: {
+			run_command: {allowedDecisions: ['approve', 'edit', 'reject']},
+		},
 	});
 
 	return agent;

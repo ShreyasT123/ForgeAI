@@ -22,6 +22,8 @@ type ParsedArgs = {
 	listSessions: boolean;
 	model: string | null;
 	nonInteractive: boolean;
+	history: string | null;
+	checkpoint: string | null;
 };
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -32,6 +34,8 @@ function parseArgs(argv: string[]): ParsedArgs {
 		listSessions: false,
 		model: null,
 		nonInteractive: false,
+		history: null,
+		checkpoint: null,
 	};
 
 	const taskParts: string[] = [];
@@ -67,6 +71,22 @@ function parseArgs(argv: string[]): ParsedArgs {
 			out.nonInteractive = true;
 			continue;
 		}
+		if (arg === '--history') {
+			const next = argv[i + 1];
+			if (next && !next.startsWith('--')) {
+				out.history = next;
+				i += 1;
+			}
+			continue;
+		}
+		if (arg === '--checkpoint') {
+			const next = argv[i + 1];
+			if (next && !next.startsWith('--')) {
+				out.checkpoint = next;
+				i += 1;
+			}
+			continue;
+		}
 
 		if (arg.startsWith('-')) {
 			// Unknown flag: ignore for now.
@@ -91,6 +111,42 @@ function listSessionsAndExit(): number {
 	console.log(`\n  Found ${sessions.length} session(s)\n`);
 	store.printList();
 	console.log('');
+	return 0;
+}
+
+async function runHistory(threadId: string): Promise<number> {
+	const agent = await createAgent();
+	const config = {configurable: {thread_id: threadId}};
+	const states = [];
+	try {
+		for await (const state of (agent as any).getStateHistory(config)) {
+			states.push(state);
+		}
+	} catch (err: any) {
+		console.log(`Error reading history: ${err.message}`);
+		return 1;
+	}
+
+	if (states.length === 0) {
+		console.log(`No history found for session '${threadId}'.`);
+		return 0;
+	}
+
+	console.log(`\nHistory for session '${threadId}' (${states.length} states):`);
+	for (const [idx, state] of states.entries()) {
+		const msg = state.values?.messages?.[state.values.messages.length - 1];
+		let text = msg?.content ?? '';
+		if (Array.isArray(text)) {
+			text = text.map((b: any) => b.text || '').join('');
+		}
+		if (typeof text === 'object') {
+			text = JSON.stringify(text);
+		}
+		const cpId = (state.config.configurable as any)?.checkpoint_id;
+		console.log(`[${states.length - 1 - idx}] Checkpoint ID: ${cpId}`);
+		console.log(`    Next: ${state.next?.length ? state.next.join(', ') : 'None'}`);
+		console.log(`    Last message: ${String(text).slice(0, 80).replace(/\n/g, ' ')}...\n`);
+	}
 	return 0;
 }
 
@@ -151,6 +207,7 @@ async function runHeadless(args: ParsedArgs, threadId: string | null): Promise<n
 	const {result, threadId: usedTid} = await runAgent(task, {
 		agent,
 		threadId,
+		checkpointId: args.checkpoint,
 	});
 
 	if (result) {
@@ -169,6 +226,9 @@ export async function runCli(
 
 	if (args.listSessions) {
 		return listSessionsAndExit();
+	}
+	if (args.history) {
+		return runHistory(args.history);
 	}
 
 	const settings = getSettings();
@@ -190,6 +250,9 @@ export async function runCli(
 		return runHeadless(args, threadId);
 	}
 
+	// For App, pass checkpoint if user wants to fork interactively
+	// Though we only pass resume, we could pass checkpointId.
+	// We'll just pass them down if needed. For now, interactive UI handles initial input via prompt.
 	const {waitUntilExit} = render(<App resume={threadId}/>, {
 		stdin: process.stdin,
 		stdout: process.stdout,

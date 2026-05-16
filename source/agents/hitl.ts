@@ -33,15 +33,28 @@ export class HITLDecision {
 		return this.action === HITLAction.APPROVE || this.action === HITLAction.EDIT;
 	}
 
-	toResumePayload(): Record<string, unknown> {
-		const payload: Record<string, unknown> = {approved: this.approved};
-		if (this.editedCommand) {
-			payload.edited_command = this.editedCommand;
+	toResumePayload(actionName: string, originalArgs: Record<string, unknown>): Record<string, unknown> {
+		if (this.action === HITLAction.APPROVE) {
+			return {decisions: [{type: 'approve'}]};
 		}
-		if (this.rejectionReason) {
-			payload.reason = this.rejectionReason;
+		if (this.action === HITLAction.REJECT) {
+			return {decisions: [{type: 'reject', feedback: this.rejectionReason ?? 'Rejected by human.'}]};
 		}
-		return payload;
+		if (this.action === HITLAction.EDIT) {
+			return {
+				decisions: [{
+					type: 'edit',
+					editedAction: {
+						name: actionName,
+						args: {
+							...originalArgs,
+							command: this.editedCommand,
+						},
+					},
+				}],
+			};
+		}
+		return {decisions: [{type: 'reject'}]};
 	}
 }
 
@@ -51,10 +64,11 @@ export type HITLPresenter = {
 
 export class CLIPresenter implements HITLPresenter {
 	async present(payload: Record<string, unknown>): Promise<HITLDecision> {
-		const cmd
-      = String(payload.command ?? payload.name ?? 'Unknown Action');
+		const actionName = String(payload.name ?? 'Unknown Action');
+		const args = (payload.args as Record<string, unknown>) ?? payload;
+		const cmd = String(args.command ?? actionName);
 		const reason = String(
-			payload.reason ?? 'No justification provided.',
+			payload.reason ?? `Action '${actionName}' requires approval.`,
 		);
 
 		const line = '='.repeat(62);
@@ -124,7 +138,8 @@ export async function handleHitlInterrupt(
 	}
 
 	const payload = (task.interrupts[0]?.value ?? {}) as Record<string, unknown>;
-	const actionName = String(payload.command ?? payload.name ?? 'Unknown');
+	const args = (payload.args as Record<string, unknown>) ?? payload;
+	const actionName = String(payload.name ?? 'Unknown');
 	logger.info(`HITL requested action=${actionName}`);
 	const configurable = (config as {configurable?: Record<string, unknown>})
 		.configurable;
@@ -134,20 +149,14 @@ export async function handleHitlInterrupt(
 	if (provided && expected && safeTokenCompare(provided, expected)) {
 		logger.info('HITL bypass token accepted');
 		const decision = new HITLDecision(HITLAction.APPROVE);
-		return await agent.invoke(
-			new Command({resume: decision.toResumePayload()}),
-			config,
-		);
+		return new Command({resume: decision.toResumePayload(actionName, args)});
 	}
 
 	if (settings.hitl.interactive) {
 		const activePresenter = presenter ?? new CLIPresenter();
 		const decision = await activePresenter.present(payload);
 		logger.info(`HITL decision=${decision.action}`);
-		return await agent.invoke(
-			new Command({resume: decision.toResumePayload()}),
-			config,
-		);
+		return new Command({resume: decision.toResumePayload(actionName, args)});
 	}
 
 	const decision
@@ -158,8 +167,5 @@ export async function handleHitlInterrupt(
     	});
 
 	logger.info(`HITL default decision=${decision.action}`);
-	return await agent.invoke(
-		new Command({resume: decision.toResumePayload()}),
-		config,
-	);
+	return new Command({resume: decision.toResumePayload(actionName, args)});
 }
